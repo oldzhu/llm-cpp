@@ -1,0 +1,10 @@
+# build artifacts
+/build/
+
+# local datasets
+/data/*.txt
+/data/*.bin
+/data/*.json
+
+# editor
+.vscode/
