@@ -344,6 +344,12 @@ Tensor gelu(const Tensor& x) {
 }
 
 Tensor layernorm_lastdim(const Tensor& x, float eps) {
+  // LayerNorm over the last dimension.
+  // For each "row" (all dims except the last):
+  //   mean = (1/D) * sum_i x_i
+  //   var  = (1/D) * sum_i (x_i - mean)^2
+  //   y_i  = (x_i - mean) / sqrt(var + eps)
+  // This implementation is the *no affine* variant (no gamma/beta).
   if (x.shape.empty()) throw std::runtime_error("layernorm: empty shape");
   const int D = x.shape.back();
   const std::size_t outer = x.numel() / static_cast<std::size_t>(D);
@@ -401,6 +407,10 @@ Tensor layernorm_lastdim(const Tensor& x, float eps) {
 }
 
 Tensor softmax_lastdim(const Tensor& x) {
+  // Softmax over last dimension (stable):
+  //   y_i = exp(x_i - max(x)) / sum_j exp(x_j - max(x))
+  // Backward uses the classic Jacobian-vector product for softmax:
+  //   dL/dx = y * (dL/dy - dot(dL/dy, y))
   if (x.shape.empty()) throw std::runtime_error("softmax: empty shape");
   const int D = x.shape.back();
   const std::size_t outer = x.numel() / static_cast<std::size_t>(D);
@@ -444,6 +454,9 @@ Tensor softmax_lastdim(const Tensor& x) {
 }
 
 Tensor linear_lastdim(const Tensor& x, const Tensor& w, const Tensor& b) {
+  // Linear layer on the last dimension.
+  // x: [B,T,Cin], w:[Cin,Cout], b:[Cout]
+  // For each (b,t): y[b,t,:] = x[b,t,:] @ w + b
   // x: [B,T,Cin], w:[Cin,Cout], b:[Cout]
   if (x.shape.size() != 3 || w.shape.size() != 2 || b.shape.size() != 1) {
     throw std::runtime_error("linear_lastdim: invalid shapes");
@@ -496,6 +509,9 @@ Tensor linear_lastdim(const Tensor& x, const Tensor& w, const Tensor& b) {
 }
 
 Tensor embedding(const Tensor& weight_vocab_by_dim, const std::vector<std::int32_t>& idx_bt, int B, int T) {
+  // Embedding lookup.
+  // weight: [V,C], idx: [B,T] token ids -> out: [B,T,C]
+  // out[b,t,:] = weight[idx[b,t],:]
   if (weight_vocab_by_dim.shape.size() != 2) throw std::runtime_error("embedding: weight must be 2D");
   const int V = weight_vocab_by_dim.shape[0];
   const int C = weight_vocab_by_dim.shape[1];
@@ -537,6 +553,17 @@ Tensor self_attention_1h(const Tensor& x,
                          const Tensor& b_qkv,
                          const Tensor& w_proj,
                          const Tensor& b_proj) {
+  // Causal self-attention, 1 head.
+  // Shapes:
+  //   x: [B,T,C]
+  //   w_qkv: [C,3C], b_qkv: [3C]
+  //   w_proj: [C,C], b_proj: [C]
+  // Math:
+  //   [Q,K,V] = x W_qkv + b_qkv
+  //   S[i,j] = (Q[i]·K[j]) / sqrt(C) + mask(j>i -> -inf)
+  //   P[i,:] = softmax(S[i,:])
+  //   Y[i]   = sum_j P[i,j] V[j]
+  //   out    = Y W_proj + b_proj
   // x: [B,T,C]
   if (x.shape.size() != 3) throw std::runtime_error("attn: x must be [B,T,C]");
   const int B = x.shape[0];
@@ -672,6 +699,12 @@ Tensor self_attention_1h(const Tensor& x,
 }
 
 Tensor cross_entropy(const Tensor& logits_nv, const std::vector<std::int32_t>& targets_n) {
+  // Mean cross-entropy loss for a batch of logits.
+  // logits: [N,V], targets: [N]
+  // For each row n:
+  //   p = softmax(logits[n,:])
+  //   loss_n = -log(p[y_n])
+  // Return: mean(loss_n)
   if (logits_nv.shape.size() != 2) throw std::runtime_error("cross_entropy: logits must be [N,V]");
   const int N = logits_nv.shape[0];
   const int V = logits_nv.shape[1];

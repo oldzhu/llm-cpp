@@ -85,3 +85,9 @@ Generate from a checkpoint (no training needed):
 
 - Vocabulary is 256 bytes (0-255). This is intentionally simple to get training working end-to-end.
 - Next steps after this baseline: SIMD, mixed precision, CUDA backend, ROCm/HIP backend.
+
+## Learning docs
+
+If your goal is to learn how modern GPT-style training/inference works, start with:
+- `docs/transformer_math_to_code.md` (equations → functions/files)
+- `docs/training_and_inference_walkthrough.md` (what happens in a run)

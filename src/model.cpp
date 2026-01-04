@@ -101,16 +101,27 @@ Tensor TinyGPT::forward_logits(const std::vector<std::int32_t>& tokens_bt, int B
   if (static_cast<int>(tokens_bt.size()) != B * T) throw std::runtime_error("forward_logits: tokens size mismatch");
   if (wte_.shape != std::vector<int>({V, C})) throw std::runtime_error("wte shape mismatch");
 
+  // === Embedding stage ===
+  // Token ids -> vectors: X = Wte[tokens] + Wpe[pos]
   Tensor x = nn::embedding(wte_, tokens_bt, B, T); // [B,T,C]
   x = add_positional(x, B, T);
 
   for (int li = 0; li < cfg_.n_layers; ++li) {
     Block& blk = blocks_[static_cast<std::size_t>(li)];
 
+    // === Transformer block (pre-norm) ===
+    // Attention sublayer:
+    //   H = LN(X)
+    //   A = CausalSelfAttn(H)
+    //   X = X + A
     Tensor h = nn::layernorm_lastdim(x, 1e-5f);
     Tensor a = nn::self_attention_1h(h, blk.w_qkv, blk.b_qkv, blk.w_proj, blk.b_proj);
     x = nn::add(x, a);
 
+    // MLP sublayer:
+    //   M  = LN(X)
+    //   FF = GELU(M W_fc + b_fc) W_out + b_out
+    //   X  = X + FF
     Tensor m = nn::layernorm_lastdim(x, 1e-5f);
     Tensor ff = nn::linear_lastdim(m, blk.w_fc, blk.b_fc);
     ff = nn::gelu(ff);
@@ -118,6 +129,9 @@ Tensor TinyGPT::forward_logits(const std::vector<std::int32_t>& tokens_bt, int B
     x = nn::add(x, ff);
   }
 
+  // Final norm + LM head:
+  //   Xn = LN(X)
+  //   logits = Xn W_lm + b_lm
   Tensor xn = nn::layernorm_lastdim(x, 1e-5f);
   Tensor logits = nn::linear_lastdim(xn, w_lm_, b_lm_); // [B,T,V]
   return logits;

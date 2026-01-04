@@ -13,6 +13,11 @@ AdamW::AdamW(const AdamWConfig& cfg) : cfg_(cfg) {
 }
 
 void AdamW::step(const std::vector<nn::Tensor*>& params) {
+  // AdamW update (decoupled weight decay):
+  //   m = b1*m + (1-b1)*g
+  //   v = b2*v + (1-b2)*g^2
+  //   mhat = m/(1-b1^t), vhat = v/(1-b2^t)
+  //   theta -= lr * ( mhat/(sqrt(vhat)+eps) + wd*theta )
   ++t_;
   const float b1 = cfg_.beta1;
   const float b2 = cfg_.beta2;
