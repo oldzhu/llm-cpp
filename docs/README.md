@@ -7,6 +7,7 @@ Start here:
 - `training_and_inference_walkthrough.md` — how a full run (train / save / load / generate) flows through the code
 - `autograd_and_memory_layout.md` — how tensors are indexed + how backward works in this repo
 - `learn_by_hand_walkthrough.md` — tiny numeric examples you can compute on paper
+- `attention_indexing_trace.md` — trace attention scores to flat-buffer offsets
 
 Conventions:
 - We prefer pointing to **functions and shapes** (e.g. `[B,T,C]`) rather than copying long paper text.
