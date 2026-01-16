@@ -10,6 +10,13 @@ Start here:
 - `attention_indexing_trace.md` — trace attention scores to flat-buffer offsets
 - `project_lifecycle_guidelines.md` — project principles + extension workflow
 
+Architecture:
+- `architecture/folder_layout_and_targets.md` — proposed folder layout + CMake target scheme
+
+Variants:
+- `variants/mha/README.md` — multi-head attention variant overview
+- `variants/mha/learn_by_hand.md` — small hand-computable MHA example
+
 Notes:
 - `notes/2026-01-16_project_goal_and_next_steps.md` — project intent + recommended roadmap
 

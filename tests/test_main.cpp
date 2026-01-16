@@ -11,6 +11,7 @@
 #include "optim.h"
 #include "tensor.h"
 #include "util.h"
+#include "variants/mha/mha_attention.h"
 
 namespace {
 
@@ -197,6 +198,70 @@ void test_tiny_training_regression_loss_decreases() {
   expect_true(last < l0, "expected training loss to decrease (l0=" + std::to_string(l0) + ", lN=" + std::to_string(last) + ")");
 }
 
+void test_mha_matches_1h_when_single_head() {
+  std::cout << "[RUN ] mha matches 1-head attention (H=1)\n";
+
+  const int B = 2;
+  const int T = 4;
+  const int C = 8;
+
+  // Deterministic init.
+  util::Rng rng(999);
+  auto fill = [&](nn::Tensor& t, float scale) {
+    for (float& v : *t.data) v = (rng.next_f01() - 0.5f) * scale;
+  };
+
+  nn::Tensor x = nn::Tensor::zeros({B, T, C}, true);
+  nn::Tensor w_qkv = nn::Tensor::zeros({C, 3 * C}, true);
+  nn::Tensor b_qkv = nn::Tensor::zeros({3 * C}, true);
+  nn::Tensor w_proj = nn::Tensor::zeros({C, C}, true);
+  nn::Tensor b_proj = nn::Tensor::zeros({C}, true);
+
+  fill(x, 0.2f);
+  fill(w_qkv, 0.2f);
+  fill(b_qkv, 0.02f);
+  fill(w_proj, 0.2f);
+  fill(b_proj, 0.02f);
+
+  // Forward equivalence.
+  nn::Tensor y1 = nn::self_attention_1h(x, w_qkv, b_qkv, w_proj, b_proj);
+  nn::Tensor y2 = nn::variants::mha::self_attention_mha(x, w_qkv, b_qkv, w_proj, b_proj, /*n_heads=*/1);
+  expect_true(y1.shape == y2.shape, "mha vs 1h: output shape matches");
+  for (std::size_t i = 0; i < y1.data->size(); ++i) {
+    expect_near((*y1.data)[i], (*y2.data)[i], 1e-5f, "mha vs 1h: forward out[" + std::to_string(i) + "]");
+  }
+
+  // Backward equivalence via a scalar loss.
+  std::vector<std::int32_t> targets(static_cast<std::size_t>(B * T));
+  for (int i = 0; i < B * T; ++i) targets[static_cast<std::size_t>(i)] = i % C;
+
+  nn::Tensor loss1 = nn::cross_entropy(nn::reshape(y1, {B * T, C}), targets);
+  loss1.backward();
+  const std::vector<float> xg1 = *x.grad;
+  const std::vector<float> wg1 = *w_qkv.grad;
+
+  x.zero_grad();
+  w_qkv.zero_grad();
+  b_qkv.zero_grad();
+  w_proj.zero_grad();
+  b_proj.zero_grad();
+
+  nn::Tensor y2b = nn::variants::mha::self_attention_mha(x, w_qkv, b_qkv, w_proj, b_proj, /*n_heads=*/1);
+  nn::Tensor loss2 = nn::cross_entropy(nn::reshape(y2b, {B * T, C}), targets);
+  loss2.backward();
+  const std::vector<float> xg2 = *x.grad;
+  const std::vector<float> wg2 = *w_qkv.grad;
+
+  expect_near((*loss1.data)[0], (*loss2.data)[0], 1e-5f, "mha vs 1h: loss matches");
+
+  for (std::size_t i = 0; i < xg1.size(); ++i) {
+    expect_near(xg1[i], xg2[i], 1e-4f, "mha vs 1h: dL/dx[" + std::to_string(i) + "]");
+  }
+  for (std::size_t i = 0; i < wg1.size(); ++i) {
+    expect_near(wg1[i], wg2[i], 2e-4f, "mha vs 1h: dL/dw_qkv[" + std::to_string(i) + "]");
+  }
+}
+
 } // namespace
 
 int main() {
@@ -204,6 +269,7 @@ int main() {
     test_gradcheck_matmul2d_via_cross_entropy();
     test_gradcheck_layernorm_lastdim_via_cross_entropy();
     test_tiny_training_regression_loss_decreases();
+    test_mha_matches_1h_when_single_head();
 
     if (g_failures == 0) {
       std::cout << "[OK  ] all tests passed\n";
