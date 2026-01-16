@@ -89,5 +89,10 @@ Generate from a checkpoint (no training needed):
 ## Learning docs
 
 If your goal is to learn how modern GPT-style training/inference works, start with:
+- `docs/README.md` (docs index)
 - `docs/transformer_math_to_code.md` (equations → functions/files)
 - `docs/training_and_inference_walkthrough.md` (what happens in a run)
+
+Project principles and workflow:
+- `docs/project_lifecycle_guidelines.md`
+- `.github/copilot-instructions.md` (persistent Copilot guidance for this repo)
