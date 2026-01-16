@@ -8,6 +8,7 @@ Start here:
 - `autograd_and_memory_layout.md` — how tensors are indexed + how backward works in this repo
 - `learn_by_hand_walkthrough.md` — tiny numeric examples you can compute on paper
 - `attention_indexing_trace.md` — trace attention scores to flat-buffer offsets
+- `project_lifecycle_guidelines.md` — project principles + extension workflow
 
 Notes:
 - `notes/2026-01-16_project_goal_and_next_steps.md` — project intent + recommended roadmap
