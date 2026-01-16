@@ -9,6 +9,9 @@ Start here:
 - `learn_by_hand_walkthrough.md` — tiny numeric examples you can compute on paper
 - `attention_indexing_trace.md` — trace attention scores to flat-buffer offsets
 
+Notes:
+- `notes/2026-01-16_project_goal_and_next_steps.md` — project intent + recommended roadmap
+
 Conventions:
 - We prefer pointing to **functions and shapes** (e.g. `[B,T,C]`) rather than copying long paper text.
 - When we reference papers, we only reference their public names/links; the content here is an original explanation.
