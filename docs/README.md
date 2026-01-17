@@ -13,6 +13,7 @@ Start here:
 Architecture:
 - `architecture/folder_layout_and_targets.md` — proposed folder layout + CMake target scheme
 - `architecture/cpp_structures_to_gpt_decoder_math.md` — C++ types/members/methods mapped to GPT decoder math
+- `architecture/hidden_states_vs_attention_matrices.md` — `[B,T,C]` vs `[B,T,T]` meaning + flat-buffer offsets
 
 Variants:
 - `variants/mha/README.md` — multi-head attention variant overview
