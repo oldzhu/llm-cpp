@@ -18,6 +18,7 @@ Architecture:
 Variants:
 - `variants/mha/README.md` — multi-head attention variant overview
 - `variants/mha/learn_by_hand.md` — small hand-computable MHA example
+- `variants/mha/what_changed_vs_core.md` — what the MHA extension added/changed vs the baseline
 
 Notes:
 - `notes/2026-01-16_project_goal_and_next_steps.md` — project intent + recommended roadmap
