@@ -142,6 +142,64 @@ Finally:
 - `scores.data[3] = scaledDot`.
 
 
+## 4.6 Connect directly to the C++ loop variables (exact)
+
+This section connects the math/indexing above to the **exact variables** used in `nn::self_attention_1h` in `src/ops.cpp`.
+
+We are still using the same tiny setup from section 0:
+- `B=1, T=3, C=2`
+- trace `bb=0, i=1, j=0`
+
+### 4.6.1 The loop computes `qi` and `kj` like this
+
+The code does:
+
+- `qi = (bb*T + i) * C`
+- `kj = (bb*T + j) * C`
+
+Plug in values:
+
+- `qi = (0*3 + 1) * 2 = 2`
+- `kj = (0*3 + 0) * 2 = 0`
+
+These are exactly the base offsets for the contiguous vectors:
+- `q[0,1,:]` starts at `q.data[2]`
+- `k[0,0,:]` starts at `k.data[0]`
+
+### 4.6.2 The inner dot-product loop is literally the sum over `c`
+
+The code computes:
+
+$$s = \sum_{c=0}^{C-1} q.data[qi + c]\cdot k.data[kj + c]$$
+
+With `C=2, qi=2, kj=0`:
+
+$$s = q.data[2]\cdot k.data[0] + q.data[3]\cdot k.data[1]$$
+
+Then the code applies scaling:
+
+$$s \leftarrow s\cdot \frac{1}{\sqrt{C}} = s\cdot \frac{1}{\sqrt{2}}$$
+
+And the causal mask:
+- here `j=0` and `i=1`, so `j>i` is false → no overwrite.
+
+### 4.6.3 The write to `scores.data[...]` is the `[B,T,T]` offset formula
+
+The code writes:
+
+- `scores.data[(bb*T + i)*T + j] = s`
+
+Plug in values:
+
+- `(bb*T + i)*T + j = (0*3 + 1)*3 + 0 = 3`
+
+So this writes:
+
+- `scores.data[3] = s`
+
+Which is exactly the flat offset $\mathrm{off}_{BTT}(0,1,0)$ from section 4.1.
+
+
 ## 5) Trace a masked element: `scores[0,1,2]`
 
 Compute flat offset:
