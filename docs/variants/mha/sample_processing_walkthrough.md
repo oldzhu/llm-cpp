@@ -288,7 +288,42 @@ $$
 
 Head `h=0` computes its own $\mathrm{att}_{0}[2]\in\mathbb{R}^{2}$ the same way (with different $Q_0,K_0,V_0$ slices). Concatenating the two heads gives a 4-wide vector again.
 
-## 5) What to try next while reading code
+## 5) Where these steps live in code
+
+This is the “search map” from the math/numeric examples above to the exact code paths.
+
+Baseline (`nn::self_attention_1h` in `src/ops.cpp`):
+
+- QKV projection: `qkv = linear_lastdim(x, w_qkv, b_qkv)`
+- Q/K/V slices: `slice_lastdim_copy(qkv, 0, C)`, `slice_lastdim_copy(qkv, C, C)`, `slice_lastdim_copy(qkv, 2*C, C)`
+- Scores (dot-product + scale + mask): the nested loops over `bb, i, j` compute
+  - `qi = (bb*T + i)*C` and `kj = (bb*T + j)*C`
+  - `s += q[qi+c] * k[kj+c]`, then `s *= 1/sqrt(C)`
+  - causal mask: `if (j > i) s = -1e9f`
+  - write: `scores[(bb*T + i)*T + j] = s`
+- Softmax: `probs = softmax_lastdim(scores)` (same `softmax_lastdim` used everywhere)
+- Weighted sum: the loops over `bb, i, c` compute
+  - `sum_j probs[(bb*T + i)*T + j] * v[(bb*T + j)*C + c]`
+
+MHA variant (`nn::variants::mha::self_attention_mha` in `src/variants/mha/mha_attention.cpp`):
+
+- QKV projection: `qkv = nn::linear_lastdim(x, w_qkv, b_qkv)`
+- Q/K/V slices: local `slice_lastdim_copy` helper (same semantics as core)
+- Head split (view reshape): `q4 = nn::reshape(q, {B,T,H,D})` (and same for `k4`, `v4`)
+- Scores per head: the nested loops over `bb, hh, i, j` compute
+  - `q_base = ((bb*T + i)*H + hh)*D` and `k_base = ((bb*T + j)*H + hh)*D`
+  - `s += q4[q_base+d] * k4[k_base+d]`, then `s *= 1/sqrt(D)`
+  - causal mask: `if (j > i) s = -1e9f`
+  - write: `scores[(((bb*H + hh)*T + i)*T + j)] = s`
+- Softmax: `probs = nn::softmax_lastdim(scores)`
+  - Note: `softmax_lastdim` always normalizes the **last** dimension, so for `[B,H,T,T]` it normalizes across `j` independently for each `(b,h,i)` row.
+- Weighted sum per head: loops compute
+  - `att[((bb*T + i)*H + hh)*D + d] = sum_j probs[p_off] * v4[v_off]`
+- Concatenate heads: `att_cat = nn::reshape(att, {B,T,C})`
+
+If you want a deeper indexing trace for a single score element, see `docs/attention_indexing_trace.md`.
+
+## 6) What to try next while reading code
 
 A good exercise is to set a breakpoint in the score loops and manually verify one element:
 
