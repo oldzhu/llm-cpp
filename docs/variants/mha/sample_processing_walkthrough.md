@@ -169,6 +169,125 @@ Interpretation:
 - baseline gives **one** probability row `probs[b,i,:]`
 - MHA gives **H** probability rows `probs[b,h,i,:]` (different attention patterns per head)
 
+## 4.1) Numeric worked example (baseline, one query row)
+
+Keep the same sizes as above: `B=1, T=3, C=4`.
+
+We’ll compute the entire attention row for `b=0, i=2` (the 3rd token attending to tokens `j=0,1,2`).
+
+Pick explicit vectors:
+
+- Query at position `i=2`:
+  - $Q[2] = [1,0,1,0]$
+- Keys at positions $j\in\{0,1,2\}$:
+  - $K[0] = [1,0,0,0]$
+  - $K[1] = [0,1,0,0]$
+  - $K[2] = [1,1,0,0]$
+
+Compute scaled dot-products (baseline uses $1/\sqrt{C} = 1/2$):
+
+$$
+\begin{aligned}
+S[2,0] &= \frac{Q[2]\cdot K[0]}{\sqrt{4}} = \tfrac{1}{2}(1\cdot 1 + 0\cdot 0 + 1\cdot 0 + 0\cdot 0) = 0.5\\
+S[2,1] &= \frac{Q[2]\cdot K[1]}{\sqrt{4}} = \tfrac{1}{2}(1\cdot 0 + 0\cdot 1 + 1\cdot 0 + 0\cdot 0) = 0\\
+S[2,2] &= \frac{Q[2]\cdot K[2]}{\sqrt{4}} = \tfrac{1}{2}(1\cdot 1 + 0\cdot 1 + 1\cdot 0 + 0\cdot 0) = 0.5
+\end{aligned}
+$$
+
+Causal mask for `i=2` allows all `j<=2`, so the masked scores are:
+
+$$
+S[2,:] = [0.5,\;0,\;0.5]
+$$
+
+Softmax over $j$:
+
+$$
+\mathrm{softmax}(S[2,:])_j = \frac{e^{S[2,j]}}{\sum_{m=0}^{2} e^{S[2,m]}}
+$$
+
+Numerically (using $e^{0.5}\approx 1.6487$):
+
+$$
+\sum e^{S} = 1.6487 + 1 + 1.6487 = 4.2974
+$$
+
+So the attention probabilities are approximately:
+
+$$
+P[2,:] \approx [0.383,\;0.233,\;0.383]
+$$
+
+Now pick explicit values for $V[j]$ (still 4-wide vectors):
+
+- $V[0] = [1,0,0,0]$
+- $V[1] = [0,2,0,0]$
+- $V[2] = [0,0,3,0]$
+
+Compute the attended output at `i=2`:
+
+$$
+\mathrm{att}[2] = \sum_{j=0}^{2} P[2,j]\;V[j]
+$$
+
+Approximately:
+
+$$
+\mathrm{att}[2] \approx
+0.383[1,0,0,0] +
+0.233[0,2,0,0] +
+0.383[0,0,3,0]
+= [0.383,\;0.466,\;1.149,\;0]
+$$
+
+This is exactly what the baseline loop computes, just without writing down the intermediate `scores`/`probs` buffers explicitly.
+
+## 4.2) Numeric worked example (MHA, one head)
+
+For MHA we use `H=2` and `D=C/H=2`. MHA repeats the same process per head, but:
+
+- it uses per-head vectors $Q_h[i], K_h[j], V_h[j] \in \mathbb{R}^{D}$
+- it scales by $1/\sqrt{D} = 1/\sqrt{2}$
+
+Here is a single-head row example for `h=1` at the same query position `i=2`:
+
+- $Q_{1}[2] = [1,\,-1]$
+- $K_{1}[0]=[1,\,0]$, $K_{1}[1]=[0,\,1]$, $K_{1}[2]=[1,\,1]$
+
+Scaled scores ($1/\sqrt{2}\approx 0.7071$):
+
+$$
+\begin{aligned}
+S_{1}[2,0] &= (1\cdot 1 + (-1)\cdot 0)\cdot 0.7071 \approx 0.7071\\
+S_{1}[2,1] &= (1\cdot 0 + (-1)\cdot 1)\cdot 0.7071 \approx -0.7071\\
+S_{1}[2,2] &= (1\cdot 1 + (-1)\cdot 1)\cdot 0.7071 = 0
+\end{aligned}
+$$
+
+Softmax (approx):
+
+$$
+e^{0.7071}\approx 2.028,\; e^{-0.7071}\approx 0.493,\; e^{0}=1,\;\;\sum\approx 3.521
+$$
+
+$$
+P_{1}[2,:] \approx [0.576,\;0.140,\;0.284]
+$$
+
+Pick per-head values:
+
+- $V_{1}[0]=[10,\,0]$, $V_{1}[1]=[0,\,10]$, $V_{1}[2]=[5,\,5]$
+
+Then the per-head attended result is:
+
+$$
+\mathrm{att}_{1}[2] = \sum_{j=0}^{2} P_{1}[2,j]\;V_{1}[j]
+\approx 0.576[10,0] + 0.140[0,10] + 0.284[5,5]
+\approx [7.18,\;2.82]
+$$
+
+Head `h=0` computes its own $\mathrm{att}_{0}[2]\in\mathbb{R}^{2}$ the same way (with different $Q_0,K_0,V_0$ slices). Concatenating the two heads gives a 4-wide vector again.
+
 ## 5) What to try next while reading code
 
 A good exercise is to set a breakpoint in the score loops and manually verify one element:
@@ -182,4 +301,4 @@ Then repeat for a masked element where `j > i`.
 
 ---
 
-This walkthrough is intentionally about shapes and offsets. If you want, we can add a follow-up note that assigns explicit numeric values to `q` and `k` and computes a real score number end-to-end (including softmax) for the same tiny sizes.
+This walkthrough is intentionally about shapes and offsets, but the numeric sections above are a good sanity check for how the score/softmax/weighted-sum pipeline behaves.
