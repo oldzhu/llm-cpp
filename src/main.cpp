@@ -36,6 +36,7 @@ struct Args {
 
   // Debug / sanity checks
   int print_next_top = 0; // 0 = disabled; prints once before the first generated token
+  bool print_next_each_step = false;
 
   bool ascii_only = false;
   bool escape_bytes = false;
@@ -66,6 +67,7 @@ static Args parse_args(int argc, char** argv) {
     else if (k == "--temp") a.temperature = std::stof(need("--temp"));
     else if (k == "--topk") a.topk = std::stoi(need("--topk"));
     else if (k == "--print-next-top") a.print_next_top = std::stoi(need("--print-next-top"));
+    else if (k == "--print-next-top-each-step") a.print_next_each_step = (std::stoi(need("--print-next-top-each-step")) != 0);
     else if (k == "--ascii-only") a.ascii_only = (std::stoi(need("--ascii-only")) != 0);
     else if (k == "--escape-bytes") a.escape_bytes = (std::stoi(need("--escape-bytes")) != 0);
     else if (k == "--help" || k == "-h") {
@@ -73,7 +75,7 @@ static Args parse_args(int argc, char** argv) {
           << "Usage:\n"
           << "  train_gpt --data <path> [--steps N] [--batch B] [--seq T] [--dmodel C] [--layers L] [--lr LR] [--seed S] [--save PREFIX]\n"
           << "  train_gpt --load PREFIX [--steps N] [--data <path>] [--save PREFIX] [--save-opt 0|1]\n"
-            << "  train_gpt [--data <path> --steps N ...] --prompt <text> [--gen N] [--temp X] [--topk K] [--print-next-top N] [--ascii-only 0|1] [--escape-bytes 0|1] [--load PREFIX]\n\n"
+            << "  train_gpt [--data <path> --steps N ...] --prompt <text> [--gen N] [--temp X] [--topk K] [--print-next-top N] [--print-next-top-each-step 0|1] [--ascii-only 0|1] [--escape-bytes 0|1] [--load PREFIX]\n\n"
           << "Notes:\n"
           << "- If --prompt is set, the program will (optionally) train first (if --steps > 0) and then generate text.\n"
           << "- Tokenization is byte-level (vocab=256).\n";
@@ -309,6 +311,7 @@ static void generate(model::TinyGPT& gpt,
                      float temperature,
                      int topk,
                      int print_next_top,
+                     bool print_next_each_step,
                      bool ascii_only,
                      bool escape_bytes,
                      util::Rng& rng) {
@@ -333,7 +336,10 @@ static void generate(model::TinyGPT& gpt,
     nn::Tensor logits = gpt.forward_logits(ctx, 1, T); // [1,T,V]
     const std::size_t base = static_cast<std::size_t>(T - 1) * static_cast<std::size_t>(V);
 
-    if (step == 0 && print_next_top > 0) {
+    if (print_next_top > 0 && (print_next_each_step || step == 0)) {
+      if (print_next_each_step) {
+        std::cout << "\n[gen step " << step << "]";
+      }
       print_next_token_distribution(logits.data->data() + base, V, temperature, print_next_top, ascii_only, escape_bytes);
     }
 
@@ -423,7 +429,16 @@ int main(int argc, char** argv) {
 
     if (!args.prompt.empty()) {
       util::Rng grng(args.seed ^ 0xABCDEF123456ULL);
-      generate(gpt, args.prompt, args.gen_tokens, args.temperature, args.topk, args.print_next_top, args.ascii_only, args.escape_bytes, grng);
+      generate(gpt,
+               args.prompt,
+               args.gen_tokens,
+               args.temperature,
+               args.topk,
+               args.print_next_top,
+               args.print_next_each_step,
+               args.ascii_only,
+               args.escape_bytes,
+               grng);
     }
 
     return 0;
