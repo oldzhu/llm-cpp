@@ -34,6 +34,9 @@ struct Args {
   float temperature = 1.0f;
   int topk = 0; // 0 = disabled
 
+  // Debug / sanity checks
+  int print_next_top = 0; // 0 = disabled; prints once before the first generated token
+
   bool ascii_only = false;
   bool escape_bytes = false;
 };
@@ -62,6 +65,7 @@ static Args parse_args(int argc, char** argv) {
     else if (k == "--gen") a.gen_tokens = std::stoi(need("--gen"));
     else if (k == "--temp") a.temperature = std::stof(need("--temp"));
     else if (k == "--topk") a.topk = std::stoi(need("--topk"));
+    else if (k == "--print-next-top") a.print_next_top = std::stoi(need("--print-next-top"));
     else if (k == "--ascii-only") a.ascii_only = (std::stoi(need("--ascii-only")) != 0);
     else if (k == "--escape-bytes") a.escape_bytes = (std::stoi(need("--escape-bytes")) != 0);
     else if (k == "--help" || k == "-h") {
@@ -69,7 +73,7 @@ static Args parse_args(int argc, char** argv) {
           << "Usage:\n"
           << "  train_gpt --data <path> [--steps N] [--batch B] [--seq T] [--dmodel C] [--layers L] [--lr LR] [--seed S] [--save PREFIX]\n"
           << "  train_gpt --load PREFIX [--steps N] [--data <path>] [--save PREFIX] [--save-opt 0|1]\n"
-            << "  train_gpt [--data <path> --steps N ...] --prompt <text> [--gen N] [--temp X] [--topk K] [--ascii-only 0|1] [--escape-bytes 0|1] [--load PREFIX]\n\n"
+            << "  train_gpt [--data <path> --steps N ...] --prompt <text> [--gen N] [--temp X] [--topk K] [--print-next-top N] [--ascii-only 0|1] [--escape-bytes 0|1] [--load PREFIX]\n\n"
           << "Notes:\n"
           << "- If --prompt is set, the program will (optionally) train first (if --steps > 0) and then generate text.\n"
           << "- Tokenization is byte-level (vocab=256).\n";
@@ -84,6 +88,7 @@ static Args parse_args(int argc, char** argv) {
   if (a.gen_tokens < 0) throw std::runtime_error("--gen must be >= 0");
   if (a.temperature <= 0.0f) throw std::runtime_error("--temp must be > 0");
   if (a.topk < 0) throw std::runtime_error("--topk must be >= 0");
+  if (a.print_next_top < 0) throw std::runtime_error("--print-next-top must be >= 0");
   return a;
 }
 
@@ -223,11 +228,87 @@ static void print_generated_byte(int token, bool escape_bytes) {
   std::cout << "\\x" << hex[(ch >> 4) & 0xF] << hex[ch & 0xF];
 }
 
+static std::string token_to_display(int token, bool escape_bytes) {
+  const unsigned char ch = static_cast<unsigned char>(token & 0xFF);
+  if (!escape_bytes) {
+    if (ch >= 32 && ch <= 126) return std::string(1, static_cast<char>(ch));
+    if (ch == '\n') return "\\n";
+    if (ch == '\r') return "\\r";
+    if (ch == '\t') return "\\t";
+    return ".";
+  }
+
+  if (ch == '\n') return "\\n";
+  if (ch == '\r') return "\\r";
+  if (ch == '\t') return "\\t";
+  if (ch >= 32 && ch <= 126) return std::string(1, static_cast<char>(ch));
+
+  static const char* hex = "0123456789ABCDEF";
+  std::string s;
+  s.push_back('\\');
+  s.push_back('x');
+  s.push_back(hex[(ch >> 4) & 0xF]);
+  s.push_back(hex[ch & 0xF]);
+  return s;
+}
+
+static void print_next_token_distribution(const float* logits,
+                                          int V,
+                                          float temperature,
+                                          int topn,
+                                          bool ascii_only,
+                                          bool escape_bytes) {
+  if (topn <= 0) return;
+  if (V <= 0) throw std::runtime_error("print_next_token_distribution: invalid V");
+  if (temperature <= 0.0f) throw std::runtime_error("print_next_token_distribution: invalid temperature");
+
+  const std::vector<int> allowed = ascii_only ? allowed_indices_ascii(V) : std::vector<int>();
+
+  // Build candidate indices.
+  std::vector<int> cand;
+  if (ascii_only) {
+    cand = allowed;
+  } else {
+    cand.resize(static_cast<std::size_t>(V));
+    for (int i = 0; i < V; ++i) cand[static_cast<std::size_t>(i)] = i;
+  }
+
+  float mx = -1e30f;
+  for (int i : cand) mx = std::max(mx, logits[i] / temperature);
+
+  std::vector<float> probs(cand.size());
+  float denom = 0.0f;
+  for (std::size_t j = 0; j < cand.size(); ++j) {
+    const float v = std::exp((logits[cand[j]] / temperature) - mx);
+    probs[j] = v;
+    denom += v;
+  }
+  const float inv = 1.0f / denom;
+  for (float& p : probs) p *= inv;
+
+  // Get top-N.
+  std::vector<std::size_t> order(cand.size());
+  for (std::size_t i = 0; i < order.size(); ++i) order[i] = i;
+  const int N = std::min<int>(topn, static_cast<int>(order.size()));
+  std::partial_sort(order.begin(), order.begin() + N, order.end(), [&](std::size_t a, std::size_t b) {
+    return probs[a] > probs[b];
+  });
+
+  std::cout << "\nTop-" << N << " next tokens (after temperature, before sampling):\n";
+  for (int r = 0; r < N; ++r) {
+    const std::size_t j = order[static_cast<std::size_t>(r)];
+    const int tok = cand[j];
+    std::cout << "  " << r + 1 << ") id=" << tok << "  p=" << probs[j] << "  tok='" << token_to_display(tok, escape_bytes) << "'\n";
+  }
+  std::cout.flush();
+}
+
 static void generate(model::TinyGPT& gpt,
                      const std::string& prompt,
                      int gen_tokens,
                      float temperature,
                      int topk,
+                     int print_next_top,
                      bool ascii_only,
                      bool escape_bytes,
                      util::Rng& rng) {
@@ -251,6 +332,11 @@ static void generate(model::TinyGPT& gpt,
 
     nn::Tensor logits = gpt.forward_logits(ctx, 1, T); // [1,T,V]
     const std::size_t base = static_cast<std::size_t>(T - 1) * static_cast<std::size_t>(V);
+
+    if (step == 0 && print_next_top > 0) {
+      print_next_token_distribution(logits.data->data() + base, V, temperature, print_next_top, ascii_only, escape_bytes);
+    }
+
     const int next = ascii_only
                          ? sample_from_logits_filtered(logits.data->data() + base, V, rng, temperature, topk, allowed)
                          : sample_from_logits(logits.data->data() + base, V, rng, temperature, topk);
@@ -337,7 +423,7 @@ int main(int argc, char** argv) {
 
     if (!args.prompt.empty()) {
       util::Rng grng(args.seed ^ 0xABCDEF123456ULL);
-      generate(gpt, args.prompt, args.gen_tokens, args.temperature, args.topk, args.ascii_only, args.escape_bytes, grng);
+      generate(gpt, args.prompt, args.gen_tokens, args.temperature, args.topk, args.print_next_top, args.ascii_only, args.escape_bytes, grng);
     }
 
     return 0;
