@@ -88,7 +88,26 @@ Approach:
 
 ### 6) Longer-term learning goals
 Only after the core training/inference stack is solid:
-- Tokenizer beyond bytes (BPE/SentencePiece)
+
+#### Tokenizer beyond bytes (subword / BPE “word tokens”)
+Goal:
+- Move from byte tokens (vocab=256) to subword tokens like GPT/Qwen/DeepSeek style tokenization.
+
+What changes:
+- Add a tokenizer + vocab file format (e.g., BPE merges + token-to-id map).
+- Switch the dataset from “bytes” to “token ids”, including:
+  - encode: text → token ids
+  - decode: token ids → text (for generation output)
+- Update model config so `vocab_size` matches the tokenizer vocabulary (instead of fixed 256).
+- Update checkpoints to store tokenizer identity/version and refuse to load mismatched vocabularies.
+
+Docs/tests contract:
+- Document the exact tokenization algorithm + file formats used.
+- Add a deterministic tokenizer round-trip test (encode→decode) and a small known-example tokenization test.
+
+Notes:
+- This is a bigger change than it looks because it touches every boundary: data loading, batching, sampling output, and checkpoint compatibility.
+
 - Mixed precision
 - Gradient checkpointing
 - Distributed training
