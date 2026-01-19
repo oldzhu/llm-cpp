@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <iostream>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
@@ -43,6 +44,11 @@ struct Args {
   int sanity_ctx = 0;            // 0 = use cfg.seq_len
   int sanity_top = 10;
 
+  // Dataset-based sanity check at a specific byte offset.
+  // The context is bytes[offset .. offset+ctx_len-1], and the expected next byte is bytes[offset+ctx_len].
+  std::int64_t sanity_offset = -1; // -1 = disabled
+  int sanity_preview = 120;        // how many context bytes to print (from the end)
+
   bool ascii_only = false;
   bool escape_bytes = false;
 };
@@ -76,6 +82,8 @@ static Args parse_args(int argc, char** argv) {
     else if (k == "--sanity-next-from-data") a.sanity_next_from_data = std::stoi(need("--sanity-next-from-data"));
     else if (k == "--sanity-ctx") a.sanity_ctx = std::stoi(need("--sanity-ctx"));
     else if (k == "--sanity-top") a.sanity_top = std::stoi(need("--sanity-top"));
+    else if (k == "--sanity-offset") a.sanity_offset = static_cast<std::int64_t>(std::stoll(need("--sanity-offset")));
+    else if (k == "--sanity-preview") a.sanity_preview = std::stoi(need("--sanity-preview"));
     else if (k == "--ascii-only") a.ascii_only = (std::stoi(need("--ascii-only")) != 0);
     else if (k == "--escape-bytes") a.escape_bytes = (std::stoi(need("--escape-bytes")) != 0);
     else if (k == "--help" || k == "-h") {
@@ -84,7 +92,8 @@ static Args parse_args(int argc, char** argv) {
           << "  train_gpt --data <path> [--steps N] [--batch B] [--seq T] [--dmodel C] [--layers L] [--lr LR] [--seed S] [--save PREFIX]\n"
           << "  train_gpt --load PREFIX [--steps N] [--data <path>] [--save PREFIX] [--save-opt 0|1]\n"
             << "  train_gpt [--data <path> --steps N ...] --prompt <text> [--gen N] [--temp X] [--topk K] [--print-next-top N] [--print-next-top-each-step 0|1] [--ascii-only 0|1] [--escape-bytes 0|1] [--load PREFIX]\n"
-            << "  train_gpt --data <path> --steps 0 --sanity-next-from-data N [--sanity-ctx T] [--sanity-top K] [--load PREFIX]\n\n"
+            << "  train_gpt --data <path> --steps 0 --sanity-next-from-data N [--sanity-ctx T] [--sanity-top K] [--load PREFIX]\n"
+            << "  train_gpt --data <path> --steps 0 --sanity-offset OFF [--sanity-ctx T] [--sanity-top K] [--sanity-preview N] [--load PREFIX]\n\n"
           << "Notes:\n"
           << "- If --prompt is set, the program will (optionally) train first (if --steps > 0) and then generate text.\n"
           << "- Tokenization is byte-level (vocab=256).\n";
@@ -99,6 +108,9 @@ static Args parse_args(int argc, char** argv) {
   if (a.sanity_next_from_data > 0 && a.data_path.empty()) {
     throw std::runtime_error("--data is required when --sanity-next-from-data > 0");
   }
+  if (a.sanity_offset >= 0 && a.data_path.empty()) {
+    throw std::runtime_error("--data is required when --sanity-offset is set");
+  }
   if (a.gen_tokens < 0) throw std::runtime_error("--gen must be >= 0");
   if (a.temperature <= 0.0f) throw std::runtime_error("--temp must be > 0");
   if (a.topk < 0) throw std::runtime_error("--topk must be >= 0");
@@ -106,6 +118,8 @@ static Args parse_args(int argc, char** argv) {
   if (a.sanity_next_from_data < 0) throw std::runtime_error("--sanity-next-from-data must be >= 0");
   if (a.sanity_ctx < 0) throw std::runtime_error("--sanity-ctx must be >= 0");
   if (a.sanity_top < 0) throw std::runtime_error("--sanity-top must be >= 0");
+  if (a.sanity_offset < -1) throw std::runtime_error("--sanity-offset must be >= 0 (or -1 to disable)");
+  if (a.sanity_preview < 0) throw std::runtime_error("--sanity-preview must be >= 0");
   return a;
 }
 
@@ -269,6 +283,24 @@ static std::string token_to_display(int token, bool escape_bytes) {
   return s;
 }
 
+static std::string bytes_to_preview(const std::vector<std::uint8_t>& bytes,
+                                    std::int64_t start,
+                                    int ctx_len,
+                                    int preview,
+                                    bool escape_bytes) {
+  if (ctx_len <= 0 || preview <= 0) return std::string();
+  const std::int64_t avail = static_cast<std::int64_t>(ctx_len);
+  const std::int64_t shown = std::min<std::int64_t>(avail, static_cast<std::int64_t>(preview));
+  const std::int64_t from = start + (avail - shown);
+  std::string out;
+  out.reserve(static_cast<std::size_t>(shown));
+  for (std::int64_t i = 0; i < shown; ++i) {
+    out += token_to_display(static_cast<int>(bytes[static_cast<std::size_t>(from + i)]), escape_bytes);
+  }
+  if (shown < avail) return std::string("...") + out;
+  return out;
+}
+
 static void print_next_token_distribution(const float* logits,
                                           int V,
                                           float temperature,
@@ -382,6 +414,58 @@ static void sanity_check_next_from_data(model::TinyGPT& gpt,
             << " = " << (static_cast<double>(correct_top1) / static_cast<double>(n_trials)) << "\n";
 }
 
+static void sanity_check_next_at_offset(model::TinyGPT& gpt,
+                                        const std::vector<std::uint8_t>& bytes,
+                                        std::int64_t offset,
+                                        int ctx_len,
+                                        int topn,
+                                        int preview,
+                                        bool escape_bytes) {
+  if (offset < 0) throw std::runtime_error("sanity_check_next_at_offset: offset must be >= 0");
+  if (ctx_len <= 0) throw std::runtime_error("sanity_check_next_at_offset: ctx_len must be > 0");
+  if (topn < 0) throw std::runtime_error("sanity_check_next_at_offset: topn must be >= 0");
+
+  const std::int64_t needed = offset + static_cast<std::int64_t>(ctx_len) + 1;
+  if (needed > static_cast<std::int64_t>(bytes.size())) {
+    std::ostringstream oss;
+    oss << "sanity_check_next_at_offset: need bytes[" << offset << ".." << (needed - 1)
+        << "] but dataset has " << bytes.size() << " bytes";
+    throw std::runtime_error(oss.str());
+  }
+
+  const int V = gpt.cfg().vocab_size;
+  if (V != 256) throw std::runtime_error("sanity_check_next_at_offset: expected V=256 byte vocab");
+
+  std::vector<std::int32_t> ctx;
+  ctx.resize(static_cast<std::size_t>(ctx_len));
+  for (int i = 0; i < ctx_len; ++i) {
+    ctx[static_cast<std::size_t>(i)] = static_cast<std::int32_t>(bytes[static_cast<std::size_t>(offset + i)]);
+  }
+  const int expected = static_cast<int>(bytes[static_cast<std::size_t>(offset + ctx_len)]);
+
+  nn::GradMode no_grad(false);
+  nn::Tensor logits = gpt.forward_logits(ctx, 1, ctx_len); // [1,ctx_len,V]
+  const std::size_t base = static_cast<std::size_t>(ctx_len - 1) * static_cast<std::size_t>(V);
+  const float* row = logits.data->data() + base;
+
+  const int pred = argmax_index(row, V);
+
+  std::cout << "\n[sanity offset] offset=" << offset << " ctx_len=" << ctx_len << " (predicts byte @ "
+            << (offset + ctx_len) << ")\n";
+  const std::string ctx_preview = bytes_to_preview(bytes, offset, ctx_len, preview, escape_bytes);
+  if (!ctx_preview.empty()) {
+    std::cout << "  context preview: \"" << ctx_preview << "\"\n";
+  }
+  std::cout << "  expected next: id=" << expected << " tok='" << token_to_display(expected, escape_bytes) << "'\n";
+  std::cout << "  pred top1:    id=" << pred << " tok='" << token_to_display(pred, escape_bytes) << "'";
+  std::cout << (pred == expected ? "  [OK]\n" : "  [MISMATCH]\n");
+
+  if (topn > 0) {
+    // Use temperature=1 and no ASCII filtering for a pure next-byte check.
+    print_next_token_distribution(row, V, 1.0f, topn, false, escape_bytes);
+  }
+}
+
 static void generate(model::TinyGPT& gpt,
                      const std::string& prompt,
                      int gen_tokens,
@@ -457,7 +541,7 @@ int main(int argc, char** argv) {
 
     std::vector<std::uint8_t> data_bytes;
     std::unique_ptr<data::ByteDataset> ds;
-    if (!args.data_path.empty() && (args.steps > 0 || args.sanity_next_from_data > 0)) {
+    if (!args.data_path.empty() && (args.steps > 0 || args.sanity_next_from_data > 0 || args.sanity_offset >= 0)) {
       data_bytes = util::read_file_bytes(args.data_path);
       if (args.steps > 0) {
         ds = std::make_unique<data::ByteDataset>(data_bytes);
@@ -505,6 +589,12 @@ int main(int argc, char** argv) {
       if (ctx_len > gpt.cfg().seq_len) throw std::runtime_error("--sanity-ctx exceeds model seq_len");
       util::Rng srng(args.seed ^ 0x51514E455854ULL);
       sanity_check_next_from_data(gpt, data_bytes, args.sanity_next_from_data, ctx_len, args.sanity_top, srng, args.escape_bytes);
+    }
+
+    if (args.sanity_offset >= 0) {
+      const int ctx_len = (args.sanity_ctx > 0) ? args.sanity_ctx : gpt.cfg().seq_len;
+      if (ctx_len > gpt.cfg().seq_len) throw std::runtime_error("--sanity-ctx exceeds model seq_len");
+      sanity_check_next_at_offset(gpt, data_bytes, args.sanity_offset, ctx_len, args.sanity_top, args.sanity_preview, args.escape_bytes);
     }
 
     if (!args.save_prefix.empty()) {

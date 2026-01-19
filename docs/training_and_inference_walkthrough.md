@@ -60,3 +60,37 @@ This is implemented in `generate(...)` in `src/main.cpp`.
 - `<prefix>.bin`: weights + optional optimizer state
 
 See `src/checkpoint.cpp` for the exact layout.
+
+
+## Sanity checks (dataset continuation)
+
+These modes are meant to validate basic “next token” behavior against the *ground truth next byte* in the dataset file.
+
+Important: this project is byte-level (vocab=256), so “token” here means “byte”.
+
+Important note:
+- With only ~60 steps on `the-verdict.txt`, it’s normal to get mixed results.
+- For this check to become consistently correct, increase training steps (e.g. `1000–5000+`) and/or increase model size.
+
+### Random dataset samples
+
+CLI flags:
+- `--sanity-next-from-data N`: sample `N` random contexts from the dataset.
+- `--sanity-ctx T`: context length in bytes (defaults to model `seq_len`).
+- `--sanity-top K`: prints top-K next-token probabilities (temperature=1, no ASCII filtering).
+
+For each trial, the program picks an offset `start` in the dataset and constructs:
+- `ctx[i] = bytes[start+i]` for `i in [0..T-1]`
+- `expected = bytes[start+T]`
+
+Then it runs `gpt.forward_logits(ctx, 1, T)` and compares the argmax at the last time step to `expected`.
+
+### One specific offset
+
+CLI flags:
+- `--sanity-offset OFF`: use a fixed dataset offset.
+- `--sanity-preview N`: print the last `N` bytes of the selected context (for human inspection).
+
+This is the “I selected a specific substring/sentence; does the model predict the very next byte from that exact position?” mode.
+
+Tip (PowerShell): if invoking via a quoted exe path, use `& <exe> --% ...` so `--flags` pass through.

@@ -61,6 +61,43 @@ Notes:
 - Tokenization is byte-level (vocab=256). Any text file works.
 - This is a tiny baseline model; quality improves with more steps and larger `--dmodel/--layers/--seq`.
 
+## Sanity checks (next-byte vs dataset)
+
+These modes help answer: “given a context pulled from the dataset, does the model predict the *actual next byte* in that dataset?”
+
+Important note:
+- With only ~60 steps on `the-verdict.txt`, it’s normal to get mixed results.
+- For this check to become consistently correct, increase training steps (e.g. `1000–5000+`) and/or increase model size.
+
+### Random contexts from the dataset
+
+Sample `N` random offsets from `--data`, run the model on each context, and compare the model’s top-1 prediction to the ground-truth next byte:
+
+```powershell
+.\build\Debug\train_gpt.exe --data .\data\the-verdict.txt --steps 0 --load .\data\ckpt_tiny --sanity-next-from-data 5 --sanity-ctx 64 --sanity-top 10 --escape-bytes 0
+```
+
+Flags:
+- `--sanity-next-from-data N`: number of random trials.
+- `--sanity-ctx T`: context length in bytes (defaults to model `seq_len`).
+- `--sanity-top K`: also prints the top-K next-token distribution.
+- `--escape-bytes 1`: prints bytes like `\xNN` for non-printables.
+
+### One specific offset (exact selection check)
+
+Check a specific byte offset `OFF` in the dataset:
+
+- Context = `bytes[OFF .. OFF+T-1]`
+- Expected next byte = `bytes[OFF+T]`
+
+```powershell
+& .\build\Debug\train_gpt.exe --% --data .\data\the-verdict.txt --steps 0 --load .\data\ckpt_tiny --sanity-offset 0 --sanity-ctx 64 --sanity-preview 120 --sanity-top 10 --escape-bytes 0
+```
+
+Notes:
+- In PowerShell, if you run the executable via a quoted path, prefer `& <exe> --% ...` to avoid PowerShell interpreting `--flags`.
+- `--sanity-preview N` prints the last `N` bytes of the context (with `...` prefix if truncated).
+
 ## Checkpoints (save/load)
 
 Save a checkpoint (writes `PREFIX.json` + `PREFIX.bin`):
