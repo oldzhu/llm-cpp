@@ -8,6 +8,7 @@ Start here:
 - `autograd_and_memory_layout.md` — how tensors are indexed + how backward works in this repo
 - `learn_by_hand_walkthrough.md` — tiny numeric examples you can compute on paper
 - `attention_indexing_trace.md` — trace attention scores to flat-buffer offsets
+- `tokenizer_choice_gpt2_bpe_vs_sentencepiece.md` — choosing subword tokenization (BPE vs SentencePiece) + import vs train
 - `project_lifecycle_guidelines.md` — project principles + extension workflow
 
 Architecture:
