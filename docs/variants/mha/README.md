@@ -1,3 +1,5 @@
+> [简体中文](README.zh-CN.md)
+
 # Multi-head attention variant (MHA)
 
 This variant adds a **naive, explicit** multi-head causal self-attention implementation.

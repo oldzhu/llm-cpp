@@ -1,3 +1,5 @@
+> [简体中文](README.zh-CN.md)
+
 # build-llm-using-cpp
 
 A small, from-scratch (CPU FP32) GPT-style Transformer training project in C++.

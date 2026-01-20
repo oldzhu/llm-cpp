@@ -1,3 +1,5 @@
+> [简体中文](project_lifecycle_guidelines.zh-CN.md)
+
 # Project lifecycle guidelines (plan + design principles)
 
 This repo is a **learning-first** from-scratch GPT/Transformer implementation in C/C++. The purpose of this document is to define the rules we follow as the project grows so that:

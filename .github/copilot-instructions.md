@@ -1,3 +1,5 @@
+> [简体中文](copilot-instructions.zh-CN.md)
+
 # Copilot instructions (build-llm-using-cpp)
 
 This repository is a **teaching-first, from-scratch** C++ implementation of a tiny GPT-style model.
@@ -22,6 +24,22 @@ When implementing a new feature that changes behavior or adds a new algorithm:
 The canonical guidance lives here:
 - `docs/project_lifecycle_guidelines.md`
 - `docs/README.md`
+
+## Bilingual docs (English + 简体中文)
+
+From now on, every Markdown document must have **two versions**:
+- English: `X.md`
+- Simplified Chinese: `X.zh-CN.md`
+
+Every English doc must include a top-of-file switch link:
+- `> [简体中文](X.zh-CN.md)`
+
+Every Chinese doc must include a top-of-file switch link:
+- `> [English](X.md)`
+
+When adding a new doc or changing behavior:
+- Update both language versions in the same change.
+- If the Chinese translation is not complete yet, include a clear “translation in progress” note, and do not remove the English version.
 
 ## Implementation style
 

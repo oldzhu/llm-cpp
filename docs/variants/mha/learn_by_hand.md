@@ -1,3 +1,5 @@
+> [简体中文](learn_by_hand.zh-CN.md)
+
 # MHA learn-by-hand (tiny example)
 
 Goal: sanity-check the *shape logic* and “per-head independence” without getting lost in large matrices.

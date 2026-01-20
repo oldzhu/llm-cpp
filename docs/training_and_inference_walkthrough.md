@@ -1,3 +1,5 @@
+> [简体中文](training_and_inference_walkthrough.zh-CN.md)
+
 # Training + inference walkthrough
 
 This is a “what happens when I run it?” guide.

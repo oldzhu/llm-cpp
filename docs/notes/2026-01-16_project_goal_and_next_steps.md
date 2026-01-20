@@ -1,3 +1,5 @@
+> [简体中文](2026-01-16_project_goal_and_next_steps.zh-CN.md)
+
 # Project goal and next steps (2026-01-16)
 
 Context: this note captures the current intent and recommended roadmap for `build-llm-using-cpp`.

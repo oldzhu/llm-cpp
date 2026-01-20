@@ -1,3 +1,5 @@
+> [简体中文](attention_indexing_trace.zh-CN.md)
+
 # Attention indexing trace (equation → loop → flat offset)
 
 This doc is a **line-for-line bridge** between the attention equations and the C++ loops.

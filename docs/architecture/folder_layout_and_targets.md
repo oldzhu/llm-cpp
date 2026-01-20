@@ -1,3 +1,5 @@
+> [简体中文](folder_layout_and_targets.zh-CN.md)
+
 # Folder layout + CMake target scheme (proposal)
 
 This repo is intentionally small, but we want a structure that scales to:

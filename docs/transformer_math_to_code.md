@@ -1,3 +1,5 @@
+> [简体中文](transformer_math_to_code.zh-CN.md)
+
 # Transformer math → this code
 
 Goal: make it easy to answer “where is *that* equation implemented?”

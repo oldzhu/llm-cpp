@@ -1,3 +1,5 @@
+> [简体中文](autograd_and_memory_layout.zh-CN.md)
+
 # Autograd + memory layout (how to read the C++ like a paper)
 
 This doc covers the two pieces that are usually *implicit* in papers but *crucial* when learning from a from-scratch C/C++ implementation:

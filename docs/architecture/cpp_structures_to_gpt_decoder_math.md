@@ -1,3 +1,5 @@
+> [简体中文](cpp_structures_to_gpt_decoder_math.zh-CN.md)
+
 # C++ structures → GPT decoder math (base core)
 
 This document is a **teaching-first map** from this repo’s C++ types (classes/structs, members, methods) to the standard decoder-only GPT math.

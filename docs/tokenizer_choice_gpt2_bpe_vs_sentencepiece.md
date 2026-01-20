@@ -1,3 +1,5 @@
+> [简体中文](tokenizer_choice_gpt2_bpe_vs_sentencepiece.zh-CN.md)
+
 # Tokenizer choice: GPT-2 BPE vs SentencePiece (BPE/Unigram)
 
 This note is a decision aid for the next-step feature: moving from the current **byte vocab (256)** to **subword tokens** (word-like tokens) by adding a tokenizer + vocabulary artifacts and switching the dataset/model to that vocab size.

@@ -1,3 +1,5 @@
+> [简体中文](why_multi_head_attention.zh-CN.md)
+
 # Why multi-head attention (MHA)? (beyond parallelism)
 
 This is a teaching note answering:

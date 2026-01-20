@@ -1,3 +1,5 @@
+> [简体中文](sample_processing_walkthrough.zh-CN.md)
+
 # Sample processing walkthrough: baseline 1-head vs MHA variant
 
 This is a concrete, step-by-step walkthrough of how one forward pass computes attention in this repo.

@@ -1,3 +1,5 @@
+> [简体中文](README.zh-CN.md)
+
 # build-llm-using-cpp docs
 
 This folder is the **learning layer** of the project: short, practical notes that map the math and algorithms to the exact C++ implementation.

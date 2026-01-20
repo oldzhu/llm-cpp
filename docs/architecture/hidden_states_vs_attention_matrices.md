@@ -1,3 +1,5 @@
+> [简体中文](hidden_states_vs_attention_matrices.zh-CN.md)
+
 # Hidden states `[B,T,C]` vs attention matrices `[B,T,T]` (with flat-buffer offsets)
 
 This note is a quick reference for two very common tensor shapes in the decoder:

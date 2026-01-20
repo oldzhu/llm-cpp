@@ -1,3 +1,5 @@
+> [简体中文](README.zh-CN.md)
+
 # data
 
 Put training/eval datasets here.

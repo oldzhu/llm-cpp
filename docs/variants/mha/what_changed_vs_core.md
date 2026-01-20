@@ -1,3 +1,5 @@
+> [简体中文](what_changed_vs_core.zh-CN.md)
+
 # MHA extension: what changed vs the core baseline (and why)
 
 This doc explains what the repo’s **multi-head attention (MHA) extension** added, what it intentionally did *not* change, and how the implementation maps to the standard transformer equations.

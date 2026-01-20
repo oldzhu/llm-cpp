@@ -1,3 +1,5 @@
+> [简体中文](learn_by_hand_walkthrough.zh-CN.md)
+
 # Learn-by-hand walkthrough (paper math → this repo)
 
 This document is meant to be *worked through on paper*.
