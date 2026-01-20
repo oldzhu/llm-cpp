@@ -29,6 +29,10 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j
 ```
 
+说明：
+- 本仓库目标是在 Windows 与 Linux 上使用同一份源码构建。
+- 在 Windows 上交叉编译 Linux（二进制），或在 Linux 上交叉编译 Windows（二进制），可以通过 toolchain 实现，但不属于基线范围。
+
 ## 运行（训练）
 
 默认会在一个文本文件上训练一个很小的“字节级”语言模型：
@@ -99,9 +103,18 @@ cmake --build build -j
 .\\build\\Debug\\train_gpt.exe --load .\\data\\ckpt_tiny --steps 0 --prompt "Hello: " --gen 200 --temp 1.0 --topk 40
 ```
 
+## 备注
+
+- 词表是 256 个字节（0–255）。这是一种刻意的简化，用来先把训练端到端打通。
+- 这个基线之后的常见下一步：SIMD、混合精度、CUDA 后端、ROCm/HIP 后端。
+
 ## 学习文档
 
 建议从以下开始：
 - `docs/README.md` / `docs/README.zh-CN.md`
-- `docs/transformer_math_to_code.md`
-- `docs/training_and_inference_walkthrough.md`
+- `docs/transformer_math_to_code.zh-CN.md`
+- `docs/training_and_inference_walkthrough.zh-CN.md`
+
+项目原则与工作流：
+- `docs/project_lifecycle_guidelines.zh-CN.md`
+- `.github/copilot-instructions.zh-CN.md`（本仓库的 Copilot 持久指导）
