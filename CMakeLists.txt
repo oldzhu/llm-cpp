@@ -15,6 +15,9 @@ add_library(llm_core
 
   src/backend/cpu_backend.cpp
   src/backend/registry.cpp
+
+  src/tokenizer/byte_tokenizer.cpp
+  src/tokenizer/bpe_tokenizer.cpp
 )
 
 target_include_directories(llm_core PUBLIC src)

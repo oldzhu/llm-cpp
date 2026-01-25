@@ -60,7 +60,7 @@ If you want readable output early in training, use ASCII-only sampling and/or es
 ```
 
 Notes:
-- Tokenization is byte-level (vocab=256). Any text file works.
+- Tokenization is pluggable: use --tokenizer byte (default) or --tokenizer bpe (with vocab/merges). Embedding layer and model config use tokenizer.vocab_size().
 - This is a tiny baseline model; quality improves with more steps and larger `--dmodel/--layers/--seq`.
 
 ## Sanity checks (next-byte vs dataset)

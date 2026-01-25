@@ -14,6 +14,8 @@
 #include "tensor.h"
 #include "util.h"
 #include "variants/mha/mha_attention.h"
+#include "tokenizer/byte_tokenizer.h"
+#include "tokenizer/bpe_tokenizer.h"
 
 namespace {
 
@@ -378,9 +380,64 @@ void test_backend_dispatch_bmm() {
   backend::set(std::make_unique<backend::CpuBackend>());
 }
 
+void test_byte_tokenizer_encode_decode() {
+  std::cout << "[RUN ] ByteTokenizer encode/decode roundtrip\n";
+  ByteTokenizer tok;
+
+  // ASCII
+  std::string s1 = "hello world!";
+  auto t1 = tok.encode(s1);
+  std::string d1 = tok.decode(t1);
+  expect_true(s1 == d1, "ASCII roundtrip");
+
+  // UTF-8 (Chinese)
+  std::string s2 = "你好，世界!";
+  auto t2 = tok.encode(s2);
+  std::string d2 = tok.decode(t2);
+  expect_true(s2 == d2, "UTF-8 roundtrip");
+
+  // Empty
+  std::string s3 = "";
+  auto t3 = tok.encode(s3);
+  std::string d3 = tok.decode(t3);
+  expect_true(s3 == d3, "Empty string roundtrip");
+
+  // All byte values
+  std::string s4;
+  for (int i = 0; i < 256; ++i) s4.push_back(static_cast<char>(i));
+  auto t4 = tok.encode(s4);
+  std::string d4 = tok.decode(t4);
+  expect_true(s4 == d4, "All byte values roundtrip");
+
+  // Vocab size
+  expect_true(tok.vocab_size() == 256, "ByteTokenizer vocab_size == 256");
+}
+
+void test_bpe_tokenizer_encode_decode() {
+  std::cout << "[RUN ] BpeTokenizer encode/decode roundtrip\n";
+  const std::string vocab_path = "tests/bpe_vocab.txt";
+  const std::string merges_path = "tests/bpe_merges.txt";
+  BpeTokenizer tok(vocab_path, merges_path);
+
+  // Simple test: "abcde" should merge to ["abc", "de"] if merges allow
+  std::string s1 = "abcde";
+  auto t1 = tok.encode(s1);
+  std::string d1 = tok.decode(t1);
+  expect_true(d1 == "abcde", "BPE roundtrip: abcde");
+
+  // Single char
+  std::string s2 = "a";
+  auto t2 = tok.encode(s2);
+  std::string d2 = tok.decode(t2);
+  expect_true(d2 == "a", "BPE roundtrip: a");
+
+  // Vocab size
+  expect_true(tok.vocab_size() == 10, "BpeTokenizer vocab_size == 10");
+}
+
 } // namespace
 
-int main() {
+int main(int argc, char** argv) {
   try {
     test_backend_dispatch_matmul2d();
     test_backend_dispatch_bmm();
@@ -388,6 +445,9 @@ int main() {
     test_gradcheck_layernorm_lastdim_via_cross_entropy();
     test_tiny_training_regression_loss_decreases();
     test_mha_matches_1h_when_single_head();
+    test_byte_tokenizer_encode_decode();
+    test_bpe_tokenizer_encode_decode();
+    test_byte_tokenizer_embedding_shape();
 
     if (g_failures == 0) {
       std::cout << "[OK  ] all tests passed\n";

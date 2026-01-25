@@ -8,13 +8,21 @@
 #include <unordered_map>
 #include <vector>
 
+
 #include "data.h"
 #include "checkpoint.h"
 #include "model.h"
 #include "optim.h"
 #include "util.h"
 
+#include "tokenizer/byte_tokenizer.h"
+#include "tokenizer/bpe_tokenizer.h"
+
 struct Args {
+    // Tokenizer
+    std::string tokenizer_type = "byte"; // "byte" or "bpe"
+    std::string bpe_vocab_path;
+    std::string bpe_merges_path;
   std::string data_path;
   int steps = 200;
   int batch = 4;
@@ -86,17 +94,20 @@ static Args parse_args(int argc, char** argv) {
     else if (k == "--sanity-preview") a.sanity_preview = std::stoi(need("--sanity-preview"));
     else if (k == "--ascii-only") a.ascii_only = (std::stoi(need("--ascii-only")) != 0);
     else if (k == "--escape-bytes") a.escape_bytes = (std::stoi(need("--escape-bytes")) != 0);
+    else if (k == "--tokenizer") a.tokenizer_type = need("--tokenizer");
+    else if (k == "--bpe-vocab") a.bpe_vocab_path = need("--bpe-vocab");
+    else if (k == "--bpe-merges") a.bpe_merges_path = need("--bpe-merges");
     else if (k == "--help" || k == "-h") {
       std::cout
           << "Usage:\n"
-          << "  train_gpt --data <path> [--steps N] [--batch B] [--seq T] [--dmodel C] [--layers L] [--lr LR] [--seed S] [--save PREFIX]\n"
+          << "  train_gpt --data <path> [--steps N] [--batch B] [--seq T] [--dmodel C] [--layers L] [--lr LR] [--seed S] [--save PREFIX] [--tokenizer byte|bpe] [--bpe-vocab <file>] [--bpe-merges <file>]\n"
           << "  train_gpt --load PREFIX [--steps N] [--data <path>] [--save PREFIX] [--save-opt 0|1]\n"
-            << "  train_gpt [--data <path> --steps N ...] --prompt <text> [--gen N] [--temp X] [--topk K] [--print-next-top N] [--print-next-top-each-step 0|1] [--ascii-only 0|1] [--escape-bytes 0|1] [--load PREFIX]\n"
+            << "  train_gpt [--data <path> --steps N ...] --prompt <text> [--gen N] [--temp X] [--topk K] [--print-next-top N] [--print-next-top-each-step 0|1] [--ascii-only 0|1] [--escape-bytes 0|1] [--load PREFIX] [--tokenizer byte|bpe] [--bpe-vocab <file>] [--bpe-merges <file>]\n"
             << "  train_gpt --data <path> --steps 0 --sanity-next-from-data N [--sanity-ctx T] [--sanity-top K] [--load PREFIX]\n"
             << "  train_gpt --data <path> --steps 0 --sanity-offset OFF [--sanity-ctx T] [--sanity-top K] [--sanity-preview N] [--load PREFIX]\n\n"
           << "Notes:\n"
           << "- If --prompt is set, the program will (optionally) train first (if --steps > 0) and then generate text.\n"
-          << "- Tokenization is byte-level (vocab=256).\n";
+          << "- Tokenization is pluggable: --tokenizer byte (default) or bpe. For bpe, --bpe-vocab and --bpe-merges are required.\n";
       std::exit(0);
     } else {
       throw std::runtime_error("unknown arg: " + k);
@@ -123,12 +134,12 @@ static Args parse_args(int argc, char** argv) {
   return a;
 }
 
-static std::vector<std::int32_t> encode_bytes(const std::string& s) {
-  std::vector<std::int32_t> out;
-  out.reserve(s.size());
-  for (unsigned char ch : s) {
-    out.push_back(static_cast<std::int32_t>(ch));
-  }
+
+// Use pluggable tokenizer (currently only ByteTokenizer)
+static std::vector<std::int32_t> encode_prompt(const std::string& s, const Tokenizer& tokenizer) {
+  std::vector<int> tokens = tokenizer.encode(s);
+  // Convert to int32_t for model
+  std::vector<std::int32_t> out(tokens.begin(), tokens.end());
   return out;
 }
 
@@ -475,8 +486,9 @@ static void generate(model::TinyGPT& gpt,
                      bool print_next_each_step,
                      bool ascii_only,
                      bool escape_bytes,
-                     util::Rng& rng) {
-  std::vector<std::int32_t> tokens = encode_bytes(prompt);
+                     util::Rng& rng,
+                     const Tokenizer& tokenizer) {
+  std::vector<std::int32_t> tokens = encode_prompt(prompt, tokenizer);
   if (tokens.empty()) {
     // Start from a newline if no prompt is provided.
     tokens.push_back(static_cast<std::int32_t>('\n'));
@@ -521,8 +533,23 @@ int main(int argc, char** argv) {
 
     std::uint64_t start_step = 0;
 
+
+    // Instantiate tokenizer
+    std::unique_ptr<Tokenizer> tokenizer;
+    if (args.tokenizer_type == "byte") {
+      tokenizer = std::make_unique<ByteTokenizer>();
+    } else if (args.tokenizer_type == "bpe") {
+      if (args.bpe_vocab_path.empty() || args.bpe_merges_path.empty()) {
+        throw std::runtime_error("BPE tokenizer requires --bpe-vocab and --bpe-merges");
+      }
+      tokenizer = std::make_unique<BpeTokenizer>(args.bpe_vocab_path, args.bpe_merges_path);
+    } else {
+      throw std::runtime_error("Unknown --tokenizer type: " + args.tokenizer_type);
+    }
+
+
     model::Config cfg;
-    cfg.vocab_size = 256;
+    cfg.vocab_size = tokenizer->vocab_size();
     cfg.seq_len = args.seq;
     cfg.d_model = args.dmodel;
     cfg.n_layers = args.layers;
@@ -607,15 +634,16 @@ int main(int argc, char** argv) {
     if (!args.prompt.empty()) {
       util::Rng grng(args.seed ^ 0xABCDEF123456ULL);
       generate(gpt,
-               args.prompt,
-               args.gen_tokens,
-               args.temperature,
-               args.topk,
-               args.print_next_top,
-               args.print_next_each_step,
-               args.ascii_only,
-               args.escape_bytes,
-               grng);
+           args.prompt,
+           args.gen_tokens,
+           args.temperature,
+           args.topk,
+           args.print_next_top,
+           args.print_next_each_step,
+           args.ascii_only,
+           args.escape_bytes,
+           grng,
+           *tokenizer);
     }
 
     return 0;

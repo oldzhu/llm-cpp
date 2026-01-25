@@ -13,6 +13,7 @@ This repository is a **teaching-first, from-scratch** C++ implementation of a ti
 - **No “magic” dependencies.** Prefer standard C++ and tiny self-contained utilities.
 - **Teach through the code.** When adding a feature, also add an explanation that maps math → code.
 
+
 ## Docs & tests contract
 
 When implementing a new feature that changes behavior or adds a new algorithm:
@@ -20,6 +21,7 @@ When implementing a new feature that changes behavior or adds a new algorithm:
 1) Update docs (high-level + learn-by-hand) and keep them consistent.
 2) Add or update tests that fail before the change and pass after.
 3) Run the test suite.
+4) **Document every Copilot reply as a daily note in `docs/notes/`, in both English and Simplified Chinese, to track all conversations and decisions.**
 
 The canonical guidance lives here:
 - `docs/project_lifecycle_guidelines.md`

@@ -42,8 +42,8 @@ cmake --build build -j
 ```
 
 说明：
-- 本项目当前的 token 是 **byte（0–255）**，`vocab=256`。
-- 如果相对路径不工作，请给 `--data` 传绝对路径。
+- 分词已可插拔：可用 --tokenizer byte（默认）或 --tokenizer bpe（需词表/合并文件）。嵌入层和模型配置自动用 tokenizer.vocab_size()。
+- 本项目为极小基线模型，训练步数/模型越大效果越好。
 
 ## 生成（采样）
 
@@ -117,4 +117,4 @@ cmake --build build -j
 
 项目原则与工作流：
 - `docs/project_lifecycle_guidelines.zh-CN.md`
-- `.github/copilot-instructions.zh-CN.md`（本仓库的 Copilot 持久指导）
+- `.github/copilot-instructions.zh-CN.md`（本仓库的 Copilot 持久指导)
