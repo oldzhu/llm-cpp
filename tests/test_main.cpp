@@ -325,11 +325,65 @@ void test_backend_dispatch_matmul2d() {
   backend::set(std::make_unique<backend::CpuBackend>());
 }
 
+void test_backend_dispatch_bmm() {
+  std::cout << "[RUN ] backend dispatch bmm (counting backend)\n";
+
+  struct CountingBackend final : public backend::KernelBackend {
+    backend::CpuBackend cpu;
+    int fwd_calls = 0;
+    int bwd_calls = 0;
+
+    void matmul2d_fwd(int m, int k, int n, const float* a_mk, const float* b_kn, float* out_mn) override {
+      ++fwd_calls;
+      cpu.matmul2d_fwd(m, k, n, a_mk, b_kn, out_mn);
+    }
+
+    void matmul2d_bwd(int m,
+                      int k,
+                      int n,
+                      const float* a_mk,
+                      const float* b_kn,
+                      const float* d_out_mn,
+                      float* d_a_mk,
+                      float* d_b_kn) override {
+      ++bwd_calls;
+      cpu.matmul2d_bwd(m, k, n, a_mk, b_kn, d_out_mn, d_a_mk, d_b_kn);
+    }
+  };
+
+  auto cb = std::make_unique<CountingBackend>();
+  CountingBackend* raw = cb.get();
+  backend::set(std::move(cb));
+
+  const int B = 3;
+  const int M = 2;
+  const int K = 4;
+  const int N = 5;
+
+  nn::Tensor a = nn::Tensor::zeros({B, M, K}, true);
+  nn::Tensor b = nn::Tensor::zeros({B, K, N}, true);
+  for (std::size_t i = 0; i < a.data->size(); ++i) (*a.data)[i] = static_cast<float>((i % 17) + 1) * 0.01f;
+  for (std::size_t i = 0; i < b.data->size(); ++i) (*b.data)[i] = static_cast<float>((i % 19) + 1) * 0.02f;
+
+  nn::Tensor out = nn::bmm(a, b);
+  expect_true(raw->fwd_calls == B, "expected bmm to call backend matmul2d_fwd exactly B times");
+
+  std::vector<std::int32_t> targets(static_cast<std::size_t>(B * M));
+  for (int i = 0; i < B * M; ++i) targets[static_cast<std::size_t>(i)] = i % N;
+  nn::Tensor loss = nn::cross_entropy(nn::reshape(out, {B * M, N}), targets);
+  loss.backward();
+  expect_true(raw->bwd_calls == B, "expected bmm backward to call backend matmul2d_bwd exactly B times");
+
+  // Restore default backend for other tests.
+  backend::set(std::make_unique<backend::CpuBackend>());
+}
+
 } // namespace
 
 int main() {
   try {
     test_backend_dispatch_matmul2d();
+    test_backend_dispatch_bmm();
     test_gradcheck_matmul2d_via_cross_entropy();
     test_gradcheck_layernorm_lastdim_via_cross_entropy();
     test_tiny_training_regression_loss_decreases();

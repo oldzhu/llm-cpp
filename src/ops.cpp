@@ -223,16 +223,13 @@ Tensor bmm(const Tensor& a, const Tensor& b) {
     const std::size_t a_off = static_cast<std::size_t>(bb) * M * K;
     const std::size_t b_off = static_cast<std::size_t>(bb) * K * N;
     const std::size_t o_off = static_cast<std::size_t>(bb) * M * N;
-    for (int i = 0; i < M; ++i) {
-      for (int j = 0; j < N; ++j) {
-        float sum = 0.0f;
-        for (int kk = 0; kk < K; ++kk) {
-          sum += (*a.data)[a_off + static_cast<std::size_t>(i) * K + kk] *
-                 (*b.data)[b_off + static_cast<std::size_t>(kk) * N + j];
-        }
-        (*out.data)[o_off + static_cast<std::size_t>(i) * N + j] = sum;
-      }
-    }
+
+    backend::get().matmul2d_fwd(M,
+                               K,
+                               N,
+                               a.data->data() + a_off,
+                               b.data->data() + b_off,
+                               out.data->data() + o_off);
   }
 
   if (out.requires_grad) {
@@ -247,33 +244,14 @@ Tensor bmm(const Tensor& a, const Tensor& b) {
         const std::size_t b_off = static_cast<std::size_t>(bb) * K * N;
         const std::size_t o_off = static_cast<std::size_t>(bb) * M * N;
 
-        // dA = dO @ B^T
-        if (pa.requires_grad) {
-          for (int i = 0; i < M; ++i) {
-            for (int kk = 0; kk < K; ++kk) {
-              float sum = 0.0f;
-              for (int j = 0; j < N; ++j) {
-                sum += (*o.grad)[o_off + static_cast<std::size_t>(i) * N + j] *
-                       (*pb.data)[b_off + static_cast<std::size_t>(kk) * N + j];
-              }
-              (*pa.grad)[a_off + static_cast<std::size_t>(i) * K + kk] += sum;
-            }
-          }
-        }
-
-        // dB = A^T @ dO
-        if (pb.requires_grad) {
-          for (int kk = 0; kk < K; ++kk) {
-            for (int j = 0; j < N; ++j) {
-              float sum = 0.0f;
-              for (int i = 0; i < M; ++i) {
-                sum += (*pa.data)[a_off + static_cast<std::size_t>(i) * K + kk] *
-                       (*o.grad)[o_off + static_cast<std::size_t>(i) * N + j];
-              }
-              (*pb.grad)[b_off + static_cast<std::size_t>(kk) * N + j] += sum;
-            }
-          }
-        }
+        backend::get().matmul2d_bwd(M,
+                                   K,
+                                   N,
+                                   pa.data->data() + a_off,
+                                   pb.data->data() + b_off,
+                                   o.grad->data() + o_off,
+                                   pa.requires_grad ? (pa.grad->data() + a_off) : nullptr,
+                                   pb.requires_grad ? (pb.grad->data() + b_off) : nullptr);
       }
     };
   }
