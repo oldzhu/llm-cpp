@@ -6,6 +6,8 @@
 #include <vector>
 
 #include "data.h"
+#include "backend/cpu_backend.h"
+#include "backend/registry.h"
 #include "model.h"
 #include "ops.h"
 #include "optim.h"
@@ -262,10 +264,72 @@ void test_mha_matches_1h_when_single_head() {
   }
 }
 
+void test_backend_dispatch_matmul2d() {
+  std::cout << "[RUN ] backend dispatch matmul2d (counting backend)\n";
+
+  struct CountingBackend final : public backend::KernelBackend {
+    backend::CpuBackend cpu;
+    int fwd_calls = 0;
+    int bwd_calls = 0;
+
+    void matmul2d_fwd(int m, int k, int n, const float* a_mk, const float* b_kn, float* out_mn) override {
+      ++fwd_calls;
+      cpu.matmul2d_fwd(m, k, n, a_mk, b_kn, out_mn);
+    }
+
+    void matmul2d_bwd(int m,
+                      int k,
+                      int n,
+                      const float* a_mk,
+                      const float* b_kn,
+                      const float* d_out_mn,
+                      float* d_a_mk,
+                      float* d_b_kn) override {
+      ++bwd_calls;
+      cpu.matmul2d_bwd(m, k, n, a_mk, b_kn, d_out_mn, d_a_mk, d_b_kn);
+    }
+  };
+
+  auto cb = std::make_unique<CountingBackend>();
+  CountingBackend* raw = cb.get();
+  backend::set(std::move(cb));
+
+  const int m = 2;
+  const int k = 3;
+  const int n = 4;
+
+  nn::Tensor a = nn::Tensor::zeros({m, k}, true);
+  nn::Tensor b = nn::Tensor::zeros({k, n}, true);
+  for (std::size_t i = 0; i < a.data->size(); ++i) (*a.data)[i] = static_cast<float>(i + 1) * 0.1f;
+  for (std::size_t i = 0; i < b.data->size(); ++i) (*b.data)[i] = static_cast<float>(i + 1) * 0.05f;
+
+  nn::Tensor c = nn::matmul2d(a, b);
+  expect_true(raw->fwd_calls > 0, "expected backend matmul2d_fwd to be called");
+
+  // Scalar loss = sum(C) so dC is all-ones.
+  nn::Tensor loss = nn::Tensor::zeros({1}, true);
+  (*loss.data)[0] = 0.0f;
+  for (float v : *c.data) (*loss.data)[0] += v;
+  loss.node = std::make_shared<nn::Node>();
+  loss.node->parents = {c};
+  loss.node->backward = [](nn::Tensor& o) {
+    nn::Tensor& pc = o.node->parents[0];
+    if (!pc.requires_grad) return;
+    for (std::size_t i = 0; i < pc.grad->size(); ++i) (*pc.grad)[i] += (*o.grad)[0];
+  };
+
+  loss.backward();
+  expect_true(raw->bwd_calls > 0, "expected backend matmul2d_bwd to be called");
+
+  // Restore default backend for other tests.
+  backend::set(std::make_unique<backend::CpuBackend>());
+}
+
 } // namespace
 
 int main() {
   try {
+    test_backend_dispatch_matmul2d();
     test_gradcheck_matmul2d_via_cross_entropy();
     test_gradcheck_layernorm_lastdim_via_cross_entropy();
     test_tiny_training_regression_loss_decreases();

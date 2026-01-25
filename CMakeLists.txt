@@ -12,6 +12,9 @@ add_library(llm_core
   src/checkpoint.cpp
   src/data.cpp
   src/util.cpp
+
+  src/backend/cpu_backend.cpp
+  src/backend/registry.cpp
 )
 
 target_include_directories(llm_core PUBLIC src)

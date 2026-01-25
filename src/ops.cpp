@@ -4,6 +4,8 @@
 #include <cmath>
 #include <stdexcept>
 
+#include "backend/registry.h"
+
 namespace nn {
 
 static bool want_grad(const Tensor& t) {
@@ -182,16 +184,8 @@ Tensor matmul2d(const Tensor& a, const Tensor& b) {
   if (k != k2) throw std::runtime_error("matmul2d: inner dim mismatch");
 
   Tensor out = Tensor::zeros({m, n}, want_grad(a) || want_grad(b));
-  for (int i = 0; i < m; ++i) {
-    for (int j = 0; j < n; ++j) {
-      float sum = 0.0f;
-      for (int kk = 0; kk < k; ++kk) {
-        sum += (*a.data)[static_cast<std::size_t>(i) * k + kk] *
-               (*b.data)[static_cast<std::size_t>(kk) * n + j];
-      }
-      (*out.data)[static_cast<std::size_t>(i) * n + j] = sum;
-    }
-  }
+
+  backend::get().matmul2d_fwd(m, k, n, a.data->data(), b.data->data(), out.data->data());
 
   if (out.requires_grad) {
     out.node = std::make_shared<Node>();
@@ -200,33 +194,14 @@ Tensor matmul2d(const Tensor& a, const Tensor& b) {
       const Tensor& pa = o.node->parents[0];
       const Tensor& pb = o.node->parents[1];
 
-      // dA = dO @ B^T
-      if (pa.requires_grad) {
-        for (int i = 0; i < m; ++i) {
-          for (int kk = 0; kk < k; ++kk) {
-            float sum = 0.0f;
-            for (int j = 0; j < n; ++j) {
-              sum += (*o.grad)[static_cast<std::size_t>(i) * n + j] *
-                     (*pb.data)[static_cast<std::size_t>(kk) * n + j];
-            }
-            (*pa.grad)[static_cast<std::size_t>(i) * k + kk] += sum;
-          }
-        }
-      }
-
-      // dB = A^T @ dO
-      if (pb.requires_grad) {
-        for (int kk = 0; kk < k; ++kk) {
-          for (int j = 0; j < n; ++j) {
-            float sum = 0.0f;
-            for (int i = 0; i < m; ++i) {
-              sum += (*pa.data)[static_cast<std::size_t>(i) * k + kk] *
-                     (*o.grad)[static_cast<std::size_t>(i) * n + j];
-            }
-            (*pb.grad)[static_cast<std::size_t>(kk) * n + j] += sum;
-          }
-        }
-      }
+      backend::get().matmul2d_bwd(m,
+                                 k,
+                                 n,
+                                 pa.data->data(),
+                                 pb.data->data(),
+                                 o.grad->data(),
+                                 pa.requires_grad ? pa.grad->data() : nullptr,
+                                 pb.requires_grad ? pb.grad->data() : nullptr);
     };
   }
 
