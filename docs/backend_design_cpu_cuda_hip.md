@@ -95,7 +95,7 @@ Add optional targets:
 - `BUILD_HIP` (OFF by default)
 
 When enabled:
-- build backend translation units (e.g., `src/backends/cuda/*.cu` or `src/backends/hip/*.cpp` with HIP)
+- build backend translation units (e.g., `src/backend/cuda/*.cu` or `src/backend/hip/*.cpp` with HIP)
 - link vendor libs (cuBLAS / rocBLAS)
 
 Keep the default build path dependency-free (CPU only).
@@ -103,9 +103,10 @@ Keep the default build path dependency-free (CPU only).
 ## Suggested file layout (incremental)
 
 - `src/ops.*` (semantics + dispatch stubs)
-- `src/backends/cpu/*` (existing or reorganized minimally)
-- `src/backends/cuda/*` (new)
-- `src/backends/hip/*` (new)
+- `src/backend/*` (backend boundary + registry)
+- `src/backend/cpu/*` (existing CPU backend)
+- `src/backend/cuda/*` (new)
+- `src/backend/hip/*` (new)
 - `docs/backend_design_cpu_cuda_hip.md` (this doc)
 
 ## Milestones

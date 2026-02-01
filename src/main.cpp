@@ -135,12 +135,16 @@ static Args parse_args(int argc, char** argv) {
 }
 
 
-// Use pluggable tokenizer (currently only ByteTokenizer)
+// Use pluggable tokenizer
 static std::vector<std::int32_t> encode_prompt(const std::string& s, const Tokenizer& tokenizer) {
   std::vector<int> tokens = tokenizer.encode(s);
   // Convert to int32_t for model
   std::vector<std::int32_t> out(tokens.begin(), tokens.end());
   return out;
+}
+
+static std::string decode_one_token(int token_id, const Tokenizer& tokenizer) {
+  return tokenizer.decode(std::vector<int>{token_id});
 }
 
 static int sample_from_logits(const float* logits, int V, util::Rng& rng, float temperature, int topk) {
@@ -494,6 +498,11 @@ static void generate(model::TinyGPT& gpt,
     tokens.push_back(static_cast<std::int32_t>('\n'));
   }
 
+  const bool is_byte_tokenizer = (dynamic_cast<const ByteTokenizer*>(&tokenizer) != nullptr);
+  if (!is_byte_tokenizer && (ascii_only || escape_bytes)) {
+    throw std::runtime_error("--ascii-only/--escape-bytes are only supported with the byte tokenizer (vocab=256)");
+  }
+
   std::cout << prompt;
   std::cout.flush();
 
@@ -521,7 +530,11 @@ static void generate(model::TinyGPT& gpt,
                          : sample_from_logits(logits.data->data() + base, V, rng, temperature, topk);
     tokens.push_back(next);
 
-    print_generated_byte(next, escape_bytes);
+    if (is_byte_tokenizer) {
+      print_generated_byte(next, escape_bytes);
+    } else {
+      std::cout << decode_one_token(next, tokenizer);
+    }
     std::cout.flush();
   }
   std::cout << "\n";
@@ -545,6 +558,13 @@ int main(int argc, char** argv) {
       tokenizer = std::make_unique<BpeTokenizer>(args.bpe_vocab_path, args.bpe_merges_path);
     } else {
       throw std::runtime_error("Unknown --tokenizer type: " + args.tokenizer_type);
+    }
+
+    // The current training/sanity data pipeline is byte-based (ByteDataset).
+    // Prevent confusing runs where the model config/vocab does not match the data.
+    if ((args.steps > 0 || args.sanity_next_from_data > 0 || args.sanity_offset >= 0) && args.tokenizer_type != "byte") {
+      throw std::runtime_error("Training and dataset-based sanity checks currently require --tokenizer byte (ByteDataset). "
+                               "Subword/BPE end-to-end training needs a token-id dataset path.");
     }
 
 

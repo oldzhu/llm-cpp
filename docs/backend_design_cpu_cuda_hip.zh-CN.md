@@ -95,7 +95,7 @@ CPU 路径保持为参考正确实现。
 - `BUILD_HIP`（默认 OFF）
 
 开启后：
-- 编译后端源文件（例如 `src/backends/cuda/*.cu` 或 `src/backends/hip/*`）
+- 编译后端源文件（例如 `src/backend/cuda/*.cu` 或 `src/backend/hip/*`）
 - 链接厂商库（cuBLAS / rocBLAS）
 
 默认构建路径保持“仅 CPU、无额外依赖”。
@@ -103,9 +103,10 @@ CPU 路径保持为参考正确实现。
 ## 建议的文件布局（增量式）
 
 - `src/ops.*`（语义 + dispatch stub）
-- `src/backends/cpu/*`（现有代码，尽量小改动）
-- `src/backends/cuda/*`（新增）
-- `src/backends/hip/*`（新增）
+- `src/backend/*`（后端边界 + registry）
+- `src/backend/cpu/*`（现有 CPU 后端）
+- `src/backend/cuda/*`（新增）
+- `src/backend/hip/*`（新增）
 - `docs/backend_design_cpu_cuda_hip.md`（本文档）
 
 ## 里程碑

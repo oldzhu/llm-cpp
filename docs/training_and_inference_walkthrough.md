@@ -15,7 +15,7 @@ This is a “what happens when I run it?” guide.
 
 ## Training loop (high-level)
 
-Given a byte dataset, the loop is:
+Given the current byte dataset, the loop is:
 
 1) Sample a batch of random substrings
 - `data::ByteDataset::sample_batch(B,T, rng)`
@@ -40,8 +40,9 @@ Given a byte dataset, the loop is:
 
 If `--prompt` is provided:
 
-1) Convert prompt string → byte tokens
-- Each character byte becomes a token id in `[0..255]`.
+1) Convert prompt string → token ids
+- Tokenization is pluggable (see `--tokenizer`).
+- In the default `byte` setup, each input byte becomes a token id in `[0..255]`.
 
 2) Repeatedly
 - Take the last `Tmax` tokens as context
@@ -50,7 +51,7 @@ If `--prompt` is provided:
 - Sample next token:
   - temperature scaling
   - optional top-k
-  - optional ASCII-only filter
+  - optional ASCII-only filter (byte tokenizer only)
 - Append token, print it
 
 This is implemented in `generate(...)` in `src/main.cpp`.
@@ -68,7 +69,9 @@ See `src/checkpoint.cpp` for the exact layout.
 
 These modes are meant to validate basic “next token” behavior against the *ground truth next byte* in the dataset file.
 
-Important: this project is byte-level (vocab=256), so “token” here means “byte”.
+Important:
+- The current dataset implementation is byte-based (`data::ByteDataset`), so these checks assume a byte vocabulary ($V=256$).
+- If you load a checkpoint trained with a different tokenizer/vocab, these byte-based sanity checks will not apply.
 
 Important note:
 - With only ~60 steps on `the-verdict.txt`, it’s normal to get mixed results.

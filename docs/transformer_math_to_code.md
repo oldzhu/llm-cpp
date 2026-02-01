@@ -5,7 +5,7 @@
 Goal: make it easy to answer “where is *that* equation implemented?”
 
 This repo implements a *tiny GPT-style decoder-only Transformer* with:
-- byte-level vocab (V=256)
+- default byte-level vocab (V=256), with pluggable tokenizers
 - learned positional embeddings
 - pre-norm blocks
 - **single-head** causal self-attention (for now)

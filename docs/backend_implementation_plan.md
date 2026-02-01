@@ -7,10 +7,13 @@ This plan turns the high-level design in `docs/backend_design_cpu_cuda_hip.md` i
 ## Current state (what we have today)
 
 - `nn::Tensor` stores data/grad as `shared_ptr<vector<float>>` (CPU-only, contiguous row-major).
-- `nn::*` ops in `src/ops.cpp` implement forward math and backward math directly (CPU loops) and build autograd `Node`s inline.
-- `src/backend/backend.h` exists but is a placeholder (no dispatch, no concrete backend).
+- Most `nn::*` ops in `src/ops.cpp` implement forward math and backward math directly (CPU loops) and build autograd `Node`s inline.
+- A backend seam exists:
+  - `src/backend/backend.h` defines `backend::KernelBackend`.
+  - `src/backend/registry.*` provides `backend::get()` and selects the active backend.
+  - `nn::matmul2d` (and `nn::bmm` via per-batch `matmul2d`) routes through the backend.
 
-This is great as a teaching baseline, but it means *there is no seam* to swap in CUDA/HIP kernels.
+This preserves the teaching-first structure while giving us a real seam to swap in CUDA/HIP kernels.
 
 ## Guiding principles
 
@@ -19,13 +22,15 @@ This is great as a teaching baseline, but it means *there is no seam* to swap in
 - Introduce a **backend seam** with minimal refactor first (CPU backend behind interface), then extend to CUDA/HIP.
 - Avoid “silent layout changes”: any packed layout must be explicit.
 
-## Milestone 1 — Create a real backend seam (CPU backend)
+## Milestone 1 — Backend seam (CPU backend)
+
+**Status:** done for `matmul2d`/`bmm`.
 
 **Goal:** refactor *implementation*, not *behavior*.
 
-### 1.1 Expand the backend interface
+### 1.1 Backend interface
 
-Modify `src/backend/backend.h` from placeholder to a minimal kernel interface focused on the first hot path: GEMM.
+`src/backend/backend.h` defines a minimal kernel interface focused on the first hot path: GEMM.
 
 Proposed additions:
 
@@ -37,18 +42,18 @@ Proposed additions:
 
 Keep the interface “shape-first”: pass `m,k,n` and raw pointers.
 
-### 1.2 Implement `CpuBackend`
+### 1.2 `CpuBackend`
 
-Add new files:
+Implemented in:
 
 - `src/backend/cpu_backend.h`
 - `src/backend/cpu_backend.cpp`
 
 Implementation should reuse the exact loops currently in `nn::matmul2d` to preserve determinism and numeric behavior.
 
-### 1.3 Add backend selection (global, explicit)
+### 1.3 Backend selection (global, explicit)
 
-Add new files:
+Implemented in:
 
 - `src/backend/registry.h`
 - `src/backend/registry.cpp`
@@ -61,9 +66,9 @@ Expose:
 
 Default is `CpuBackend`.
 
-### 1.4 Refactor `nn::matmul2d` to call the backend
+### 1.4 `nn::matmul2d` routes through the backend
 
-Modify `src/ops.cpp`:
+Implemented in `src/ops.cpp`:
 
 - In `nn::matmul2d` forward: allocate output tensor, then call `backend::get().matmul2d_fwd(...)`.
 - In `nn::matmul2d` backward lambda: call `backend::get().matmul2d_bwd(...)`.
@@ -81,6 +86,8 @@ Add/extend tests (prefer small, deterministic shapes):
 Acceptance criteria:
 - No behavior changes in existing tests.
 - New tests pass on CPU-only build.
+
+Note: this milestone is already in place for matmul/bmm; the remaining work is to extend backend routing to additional hot ops.
 
 ## Milestone 2 — CUDA proof-of-concept (matmul only)
 

@@ -2,7 +2,16 @@
 
 # Tokenizer 选择：GPT-2 BPE vs SentencePiece（BPE/Unigram）
 
-这份笔记用于辅助一个“下一步特性”的决策：从当前的 **byte vocab（256）** 迁移到 **子词（subword）token**（更“像词”的 tokens），这需要：
+这份笔记用于辅助“从最初的 byte vocab（256）基线”走向 **子词（subword）token**（更“像词”的 tokens）时的决策，并帮助选择下一步要优先实现的子词方案。
+
+## 状态更新（本仓库目前已经有什么）
+
+- tokenization 已经做成可插拔：`Tokenizer` 接口（`src/tokenizer/tokenizer.h`）。
+- 目前实现：
+  - `ByteTokenizer`（`vocab=256`）
+  - `BpeTokenizer`（最小 GPT-2-ish BPE，偏“导入/加载工件”的路径）
+- 默认训练数据集仍然是 byte-based（`data::ByteDataset`）。要做端到端的 subword 训练，还需要增加“token id 数据集”的数据路径。
+- 采样/打印应视为 tokenizer 相关：需要把 token ids decode 成文本。
 
 - 增加 tokenizer + 词表工件（artifacts）
 - 数据集与模型的 `vocab_size` 跟随该词表（不再固定为 256）

@@ -5,7 +5,7 @@
 目标：让你能快速回答“那条公式在代码里的哪里实现？”
 
 本仓库实现一个 *很小的、GPT 风格的 decoder-only Transformer*：
-- 字节级词表（$V=256$）
+- 默认使用字节级词表（$V=256$），并支持可插拔 tokenizer
 - 学习得到的位置嵌入（positional embeddings）
 - pre-norm 残差块（子层之前做 LayerNorm）
 - （目前）**单头** causal self-attention

@@ -5,7 +5,8 @@
 Put training/eval datasets here.
 
 Notes:
-- This project defaults to byte-level (vocab=256), so any text file works.
+- The current training data pipeline is byte-level (vocab=256), so any text file works.
+- Subword/BPE end-to-end training would require a token-id dataset path (not implemented yet).
 - Large datasets should stay local; `data/*.txt` is gitignored.
 
 Example (PowerShell):

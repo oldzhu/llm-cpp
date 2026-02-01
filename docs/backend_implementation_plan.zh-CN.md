@@ -7,10 +7,13 @@
 ## 当前状态（今天代码是什么样）
 
 - `nn::Tensor` 用 `shared_ptr<vector<float>>` 保存 data/grad（仅 CPU、row-major contiguous）。
-- `src/ops.cpp` 里的 `nn::*` ops 直接用 CPU for-loop 做 forward/backward，并在函数内构建 autograd `Node`。
-- `src/backend/backend.h` 存在，但只是占位（没有 dispatch、没有具体后端）。
+- `src/ops.cpp` 里大多数 `nn::*` ops 仍然直接用 CPU for-loop 做 forward/backward，并在函数内构建 autograd `Node`。
+- 后端“缝”已经存在：
+  - `src/backend/backend.h` 定义了 `backend::KernelBackend`。
+  - `src/backend/registry.*` 提供 `backend::get()` 并选择当前后端。
+  - `nn::matmul2d`（以及 `nn::bmm`：按 batch 循环调用 `matmul2d`）会通过后端执行。
 
-这非常适合作为教学基线，但也意味着：**目前没有“可替换的缝”去接 CUDA/HIP kernels**。
+这在保持教学优先结构的同时，也提供了一个真实的边界，用于后续接入 CUDA/HIP kernels。
 
 ## 指导原则
 
@@ -19,13 +22,15 @@
 - 先做“最小重构”引入后端边界（先把 CPU 实现放到后端里），再逐步扩展到 CUDA/HIP。
 - 不允许“偷偷换 layout”：任何 packed layout 必须显式呈现。
 
-## 里程碑 1 — 先做一个真实的后端缝（CPU 后端）
+## 里程碑 1 — 后端缝（CPU 后端）
+
+**状态：**`matmul2d`/`bmm` 已完成。
 
 **目标：**只改实现方式，不改行为。
 
-### 1.1 扩展后端接口
+### 1.1 后端接口
 
-把 `src/backend/backend.h` 从占位扩展为最小 kernel 接口，先聚焦最热的 GEMM。
+`src/backend/backend.h` 提供了聚焦 GEMM 的最小 kernel 接口。
 
 建议新增：
 
@@ -37,18 +42,18 @@
 
 保持“shape-first”：传 `m,k,n` 和原始指针。
 
-### 1.2 实现 `CpuBackend`
+### 1.2 `CpuBackend`
 
-新增文件：
+实现位置：
 
 - `src/backend/cpu_backend.h`
 - `src/backend/cpu_backend.cpp`
 
 实现应复用当前 `nn::matmul2d` 里的循环结构，以尽可能保持确定性与数值行为一致。
 
-### 1.3 增加后端选择（全局、显式）
+### 1.3 后端选择（全局、显式）
 
-新增文件：
+实现位置：
 
 - `src/backend/registry.h`
 - `src/backend/registry.cpp`
@@ -61,9 +66,9 @@
 
 默认使用 `CpuBackend`。
 
-### 1.4 重构 `nn::matmul2d` 通过后端执行
+### 1.4 `nn::matmul2d` 通过后端执行
 
-修改 `src/ops.cpp`：
+在 `src/ops.cpp` 中实现：
 
 - `nn::matmul2d` forward：分配输出张量后，调用 `backend::get().matmul2d_fwd(...)`。
 - `nn::matmul2d` backward lambda：调用 `backend::get().matmul2d_bwd(...)`。
@@ -83,6 +88,8 @@
 验收标准：
 - 现有测试不变且全部通过。
 - 新增测试在 CPU-only 构建下通过。
+
+说明：该里程碑对 matmul/bmm 已经就位；剩余工作是把更多热点算子也路由到后端。
 
 ## 里程碑 2 — CUDA 可跑的最小 POC（只做 matmul）
 

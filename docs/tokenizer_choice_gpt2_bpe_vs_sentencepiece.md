@@ -2,7 +2,16 @@
 
 # Tokenizer choice: GPT-2 BPE vs SentencePiece (BPE/Unigram)
 
-This note is a decision aid for the next-step feature: moving from the current **byte vocab (256)** to **subword tokens** (word-like tokens) by adding a tokenizer + vocabulary artifacts and switching the dataset/model to that vocab size.
+This note is a decision aid for moving from the original **byte vocab (256)** baseline to **subword tokens** (word-like tokens), and for choosing which subword approach to pursue next.
+
+## Status update (what exists in this repo today)
+
+- Tokenization is pluggable via the `Tokenizer` interface (`src/tokenizer/tokenizer.h`).
+- Implementations:
+  - `ByteTokenizer` (vocab=256)
+  - `BpeTokenizer` (minimal GPT-2-ish BPE, load/import-style)
+- The default training dataset is still byte-based (`data::ByteDataset`). End-to-end subword training requires a token-id dataset path.
+- Sampling/printing should be considered tokenizer-dependent (decode token ids → text).
 
 Scope of this doc:
 - Compare **classic GPT-2-style BPE** vs **SentencePiece** approaches.

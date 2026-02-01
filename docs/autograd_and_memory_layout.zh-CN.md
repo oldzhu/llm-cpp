@@ -126,7 +126,9 @@ $$\frac{\partial L}{\partial A} = \frac{\partial L}{\partial O} B^T$$
 $$\frac{\partial L}{\partial B} = A^T \frac{\partial L}{\partial O}$$
 
 代码里：
-- `nn::matmul2d(...)`（`src/ops.cpp`）用显式 for-loop 计算上面两条公式。
+- `nn::matmul2d(...)`（`src/ops.cpp`）负责构建 autograd node，并把实际计算通过后端边界执行。
+  - 默认的 CPU 后端会使用显式 for-loop。
+  - backward 会调用后端 kernel，并以 `+=` 的形式把梯度累加到 `dA`/`dB`。
 
 学习建议：
 - 对照 loop 的下标与 shape：

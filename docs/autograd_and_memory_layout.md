@@ -126,7 +126,9 @@ $$\frac{\partial L}{\partial A} = \frac{\partial L}{\partial O} B^T$$
 $$\frac{\partial L}{\partial B} = A^T \frac{\partial L}{\partial O}$$
 
 In code:
-- `nn::matmul2d(...)` in `src/ops.cpp` computes these two formulas with explicit loops.
+- `nn::matmul2d(...)` in `src/ops.cpp` builds the autograd node and routes the actual math through the backend seam.
+  - The default CPU backend uses explicit loops.
+  - Backward uses backend kernels that accumulate into `dA`/`dB` (via `+=`).
 
 Learning tip:
 - Compare the indices in the loops to the shapes:

@@ -14,7 +14,7 @@
 
 ## 训练循环（高层）
 
-给定一个字节数据集（byte dataset），训练循环是：
+给定当前的字节数据集（byte dataset），训练循环是：
 
 1) 从数据集中抽样一个 batch 的随机子串
 - `data::ByteDataset::sample_batch(B,T, rng)`
@@ -38,8 +38,9 @@
 
 当提供 `--prompt` 时：
 
-1) 把 prompt 字符串转换为 byte tokens
-- 每个字符的 byte 直接作为 token id（范围 `[0..255]`）。
+1) 把 prompt 字符串转换为 token ids
+- tokenization 是可插拔的（见 `--tokenizer`）。
+- 在默认的 `byte` 设置下，每个输入 byte 会直接作为 token id（范围 `[0..255]`）。
 
 2) 重复执行：
 - 取最后最多 `Tmax` 个 token 作为上下文
@@ -48,7 +49,7 @@
 - 采样下一个 token：
   - temperature 缩放
   - 可选 top-k
-  - 可选 ASCII-only 过滤
+  - 可选 ASCII-only 过滤（仅 byte tokenizer）
 - 追加 token 并打印
 
 实现位置：`src/main.cpp` 中的 `generate(...)`。
@@ -66,7 +67,8 @@
 这些模式用于把模型的“下一 token”预测与数据集文件中的 **真实下一字节** 对齐验证。
 
 重要说明：
-- 本项目是 byte-level（`vocab=256`），所以这里的 token 就是 byte。
+- 当前数据集实现是 byte-based（`data::ByteDataset`），因此这些检查默认假设字节词表（$V=256$）。
+- 如果你加载的是使用其他 tokenizer/vocab 训练的 checkpoint，这些 byte-based 的 sanity 检查就不适用了。
 - 仅在 `the-verdict.txt` 上训练约 ~60 step 得到“有时对、有时错”是正常的。
 - 若希望更稳定地预测正确：增加训练步数（例如 `1000–5000+`）和/或增大模型规模。
 
