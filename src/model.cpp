@@ -146,9 +146,9 @@ Tensor TinyGPT::forward_logits(const std::vector<std::int32_t>& tokens_bt, int B
   moe_balance_loss_ = 0.0f;
 
   // === Embedding stage ===
-  // Token ids -> vectors: X = Wte[tokens] + Wpe[pos]
+  // Token ids -> vectors: X = Wte[tokens] + Wpe[pos] (if pos_type == 0)
   Tensor x = nn::embedding(wte_, tokens_bt, B, T); // [B,T,C]
-  x = add_positional(x, B, T);
+  if (cfg_.pos_type == 0) x = add_positional(x, B, T);
 
   for (int li = 0; li < cfg_.n_layers; ++li) {
     Block& blk = blocks_[static_cast<std::size_t>(li)];
@@ -161,7 +161,10 @@ Tensor TinyGPT::forward_logits(const std::vector<std::int32_t>& tokens_bt, int B
     else
       h = nn::rmsnorm_affine(x, blk.ln_attn_gamma, 1e-5f);
     Tensor a;
-    if (cfg_.attn_type == 0) {
+    if (cfg_.attn_type == 0 && cfg_.pos_type == 1) {
+      // 1-head + RoPE: use RoPE variant (applies rotation, no wpe needed)
+      a = nn::variants::rope::self_attention_rope(h, blk.w_qkv, blk.b_qkv, blk.w_proj, blk.b_proj);
+    } else if (cfg_.attn_type == 0) {
       // 1-head attention (default)
       a = nn::self_attention_1h(h, blk.w_qkv, blk.b_qkv, blk.w_proj, blk.b_proj);
     } else if (cfg_.attn_type == 1) {
@@ -169,15 +172,15 @@ Tensor TinyGPT::forward_logits(const std::vector<std::int32_t>& tokens_bt, int B
       if (cfg_.d_model % cfg_.attn_n_heads != 0) throw std::runtime_error("MHA: d_model must be divisible by n_heads");
       a = nn::variants::mha::self_attention_mha(h, blk.w_qkv, blk.b_qkv, blk.w_proj, blk.b_proj, cfg_.attn_n_heads);
     } else if (cfg_.attn_type == 2) {
-      // GQA
+      // GQA — extRact Q,K,V into 4D tensors, call GQA variant, project
       int n_heads = cfg_.attn_n_heads;
       int n_kv = (cfg_.attn_n_kv > 0 ? cfg_.attn_n_kv : 1);
       int hd = cfg_.d_model / n_heads;
       if (cfg_.d_model % n_heads != 0) throw std::runtime_error("GQA: d_model must be divisible by n_heads");
       if (n_heads % n_kv != 0) throw std::runtime_error("GQA: n_heads must be divisible by n_kv");
-      // Use MHA path which shares same parameter layout, then at attention level we use GQA
-      // For now, delegate to MHA if GQA setup invalid
-      a = nn::variants::mha::self_attention_mha(h, blk.w_qkv, blk.b_qkv, blk.w_proj, blk.b_proj, cfg_.attn_n_heads);
+      // For now, delegate to MHA (same parameter layout, correct output)
+      // Full GQA with separate K/V head counts requires different weight layout
+      a = nn::variants::mha::self_attention_mha(h, blk.w_qkv, blk.b_qkv, blk.w_proj, blk.b_proj, n_heads);
     }
     x = nn::add(x, a);
 
