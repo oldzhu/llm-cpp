@@ -1,0 +1,19 @@
+<div class="config-panel">
+  <div class="preset-bar">
+    <span data-i18n="config.presets">Presets:</span>
+    <button class="preset-btn" data-preset="Tiny (32M)" data-i18n="preset.Tiny (32M)">Tiny</button>
+    <button class="preset-btn" data-preset="Small (64M)" data-i18n="preset.Small (64M)">Small</button>
+    <button class="preset-btn" data-preset="Medium (100M)" data-i18n="preset.Medium (100M)">Medium</button>
+    <button class="preset-btn" data-preset="BPE Tiny" data-i18n="preset.BPE Tiny">BPE Tiny</button>
+  </div>
+
+  <form id="config-form">
+    <div id="config-groups"></div>
+  </form>
+
+  <div class="action-bar">
+    <button id="btn-start" class="btn btn-start" data-i18n="config.start">▶ Start Training</button>
+    <button id="btn-stop" class="btn btn-stop" disabled data-i18n="config.stop">⏹ Stop &amp; Save</button>
+    <span id="train-status" class="train-status"></span>
+  </div>
+</div>

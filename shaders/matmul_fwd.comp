@@ -1,0 +1,27 @@
+#version 450
+// Vulkan compute shader: matmul C[M,N] = A[M,K] @ B[K,N]
+// Dispatch: (N+15)/16 x (M+15)/16 x 1
+
+layout(local_size_x = 16, local_size_y = 16, local_size_z = 1) in;
+
+layout(set = 0, binding = 0) readonly buffer A { float a[]; };
+layout(set = 0, binding = 1) readonly buffer B { float b[]; };
+layout(set = 0, binding = 2) writeonly buffer C { float c[]; };
+
+layout(push_constant, std430) uniform Params {
+    int M;
+    int K;
+    int N;
+} params;
+
+void main() {
+    uint row = gl_GlobalInvocationID.y;
+    uint col = gl_GlobalInvocationID.x;
+    if (row >= params.M || col >= params.N) return;
+
+    float sum = 0.0;
+    for (int kk = 0; kk < params.K; ++kk) {
+        sum += a[row * params.K + kk] * b[kk * params.N + col];
+    }
+    c[row * params.N + col] = sum;
+}

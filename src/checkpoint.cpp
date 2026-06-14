@@ -149,7 +149,7 @@ void save(const std::string& prefix, const model::TinyGPT& gpt, const optim::Ada
   const std::string json =
       std::string("{\n") +
       "  \"format\": \"build-llm-using-cpp-checkpoint\",\n" +
-      "  \"version\": 1,\n" +
+      "  \"version\": 5,\n" +
       "  \"vocab_size\": " + std::to_string(mc.vocab_size) + ",\n" +
       "  \"seq_len\": " + std::to_string(mc.seq_len) + ",\n" +
       "  \"d_model\": " + std::to_string(mc.d_model) + ",\n" +
@@ -172,7 +172,7 @@ void save(const std::string& prefix, const model::TinyGPT& gpt, const optim::Ada
 
   const char magic[8] = {'B', 'G', 'P', 'T', 'C', 'K', 'P', 'T'};
   out.write(magic, sizeof(magic));
-  write_u32(out, 1); // version
+  write_u32(out, 5); // version (pipeline composition)
   write_u32(out, save_optim_state ? 1u : 0u);
   write_u64(out, step);
   write_u32(out, static_cast<std::uint32_t>(params_const.size()));
@@ -209,25 +209,86 @@ void load(const std::string& prefix, model::TinyGPT& gpt, optim::AdamW& opt, std
   }
 
   const std::uint32_t version = read_u32(in);
-  if (version != 1) throw std::runtime_error("unsupported checkpoint version");
+  if (version != 1 && version != 2 && version != 3 && version != 4 && version != 5) throw std::runtime_error("unsupported checkpoint version");
 
   const std::uint32_t has_opt = read_u32(in);
   step_out = read_u64(in);
   const std::uint32_t nparams = read_u32(in);
 
   auto params = gpt.parameters().tensors;
-  if (nparams != static_cast<std::uint32_t>(params.size())) {
-    throw std::runtime_error("checkpoint param-count mismatch (different model config?)");
-  }
+  std::vector<std::size_t> v1_to_new; // only populated for version == 1
+  std::uint32_t v1_nparams = 0;
 
-  for (std::size_t i = 0; i < params.size(); ++i) {
-    nn::Tensor* p = params[i];
-    const std::uint64_t n = read_u64(in);
-    if (n != static_cast<std::uint64_t>(p->numel())) {
-      throw std::runtime_error("checkpoint tensor size mismatch (different model config?)");
+  if (version == 1) {
+    v1_nparams = nparams;
+    const int n_layers = gpt.cfg().n_layers;
+
+    v1_to_new.reserve(static_cast<std::size_t>(v1_nparams));
+    v1_to_new.push_back(0);
+    v1_to_new.push_back(1);
+    for (int li = 0; li < n_layers; ++li) {
+      const std::size_t base = 2 + static_cast<std::size_t>(li) * 12;
+      v1_to_new.push_back(base + 0); v1_to_new.push_back(base + 1);
+      v1_to_new.push_back(base + 2); v1_to_new.push_back(base + 3);
+      v1_to_new.push_back(base + 4); v1_to_new.push_back(base + 5);
+      v1_to_new.push_back(base + 6); v1_to_new.push_back(base + 7);
     }
-    in.read(reinterpret_cast<char*>(p->data->data()), static_cast<std::streamsize>(n * sizeof(float)));
-    if (!in) throw std::runtime_error("failed reading tensor data");
+    v1_to_new.push_back(2 + static_cast<std::size_t>(n_layers) * 12 + 0);
+    v1_to_new.push_back(2 + static_cast<std::size_t>(n_layers) * 12 + 1);
+
+    if (v1_to_new.size() != static_cast<std::size_t>(v1_nparams)) {
+      throw std::runtime_error("v1 checkpoint: internal index mapping mismatch");
+    }
+
+    for (std::size_t iold = 0; iold < static_cast<std::size_t>(v1_nparams); ++iold) {
+      nn::Tensor* p = params[v1_to_new[iold]];
+      const std::uint64_t n = read_u64(in);
+      if (n != static_cast<std::uint64_t>(p->numel())) {
+        throw std::runtime_error("v1 checkpoint tensor size mismatch (different model config?)");
+      }
+      in.read(reinterpret_cast<char*>(p->data->data()), static_cast<std::streamsize>(n * sizeof(float)));
+      if (!in) throw std::runtime_error("failed reading v1 tensor data");
+    }
+
+    for (int li = 0; li < n_layers; ++li) {
+      const std::size_t base = 2 + static_cast<std::size_t>(li) * 12;
+      nn::Tensor* ag = params[base + 8];
+      nn::Tensor* ab = params[base + 9];
+      nn::Tensor* mg = params[base + 10];
+      nn::Tensor* mb = params[base + 11];
+      for (std::size_t j = 0; j < ag->numel(); ++j) (*ag->data)[j] = 1.0f;
+      for (std::size_t j = 0; j < ab->numel(); ++j) (*ab->data)[j] = 0.0f;
+      for (std::size_t j = 0; j < mg->numel(); ++j) (*mg->data)[j] = 1.0f;
+      for (std::size_t j = 0; j < mb->numel(); ++j) (*mb->data)[j] = 0.0f;
+    }
+    nn::Tensor* fg = params[2 + static_cast<std::size_t>(n_layers) * 12 + 2];
+    nn::Tensor* fb = params[2 + static_cast<std::size_t>(n_layers) * 12 + 3];
+    for (std::size_t j = 0; j < fg->numel(); ++j) (*fg->data)[j] = 1.0f;
+    for (std::size_t j = 0; j < fb->numel(); ++j) (*fb->data)[j] = 0.0f;
+  } else {
+    // v2 or v3 — load all params (v3 adds SwiGLU params)
+    if (nparams > static_cast<std::uint32_t>(params.size())) {
+      throw std::runtime_error("checkpoint param-count mismatch (different model config?)");
+    }
+    for (std::size_t i = 0; i < params.size(); ++i) {
+      nn::Tensor* p = params[i];
+      if (i >= static_cast<std::size_t>(nparams)) {
+        // SwiGLU params not present in v2 checkpoint — init from existing or zeros
+        for (std::size_t j = 0; j < p->numel(); ++j) (*p->data)[j] = 0.0f;
+        continue;
+      }
+      const std::uint64_t n = read_u64(in);
+      if (n != static_cast<std::uint64_t>(p->numel())) {
+        throw std::runtime_error("checkpoint tensor size mismatch (different model config?)");
+      }
+      in.read(reinterpret_cast<char*>(p->data->data()), static_cast<std::streamsize>(n * sizeof(float)));
+      if (!in) throw std::runtime_error("failed reading tensor data");
+    }
+    // For v2: if we loaded fewer params than the model has, remaining are SwiGLU — init zeros
+    for (std::size_t i = nparams; i < params.size(); ++i) {
+      nn::Tensor* p = params[i];
+      for (std::size_t j = 0; j < p->numel(); ++j) (*p->data)[j] = 0.0f;
+    }
   }
 
   if (has_opt != 0) {
@@ -235,15 +296,126 @@ void load(const std::string& prefix, model::TinyGPT& gpt, optim::AdamW& opt, std
     st.t = read_u64(in);
     st.m.resize(params.size());
     st.v.resize(params.size());
-    for (std::size_t i = 0; i < params.size(); ++i) {
-      const std::size_t n = params[i]->numel();
-      st.m[i].resize(n);
-      st.v[i].resize(n);
-      in.read(reinterpret_cast<char*>(st.m[i].data()), static_cast<std::streamsize>(n * sizeof(float)));
-      in.read(reinterpret_cast<char*>(st.v[i].data()), static_cast<std::streamsize>(n * sizeof(float)));
-      if (!in) throw std::runtime_error("failed reading optimizer state");
+    if (version == 1) {
+      // v1 optimizer state only covers the old params.
+      // Load state into mapped positions, zero-init new LN param state.
+      for (std::size_t i = 0; i < params.size(); ++i) {
+        const std::size_t n = params[i]->numel();
+        st.m[i].resize(n, 0.0f);
+        st.v[i].resize(n, 0.0f);
+      }
+      for (std::size_t iold = 0; iold < static_cast<std::size_t>(v1_nparams); ++iold) {
+        const std::size_t inew = v1_to_new[iold];
+        const std::size_t n = params[inew]->numel();
+        in.read(reinterpret_cast<char*>(st.m[inew].data()), static_cast<std::streamsize>(n * sizeof(float)));
+        in.read(reinterpret_cast<char*>(st.v[inew].data()), static_cast<std::streamsize>(n * sizeof(float)));
+        if (!in) throw std::runtime_error("failed reading v1 optimizer state");
+      }
+    } else {
+      for (std::size_t i = 0; i < params.size(); ++i) {
+        const std::size_t n = params[i]->numel();
+        st.m[i].resize(n);
+        st.v[i].resize(n);
+        in.read(reinterpret_cast<char*>(st.m[i].data()), static_cast<std::streamsize>(n * sizeof(float)));
+        in.read(reinterpret_cast<char*>(st.v[i].data()), static_cast<std::streamsize>(n * sizeof(float)));
+        if (!in) throw std::runtime_error("failed reading optimizer state");
+      }
     }
     opt.import_state(params, st);
+  }
+}
+
+static std::vector<std::string> param_names(const model::TinyGPT& gpt) {
+  const int n = gpt.cfg().n_layers;
+  std::vector<std::string> names;
+  names = {"wte","wpe"};
+  for (int li = 0; li < n; ++li) {
+    std::string p = "L" + std::to_string(li) + "_";
+    names.push_back(p+"w_qkv");
+    names.push_back(p+"b_qkv");
+    names.push_back(p+"w_proj");
+    names.push_back(p+"b_proj");
+    names.push_back(p+"w_fc");
+    names.push_back(p+"b_fc");
+    names.push_back(p+"w_out");
+    names.push_back(p+"b_out");
+    names.push_back(p+"ln_attn_gamma");
+    names.push_back(p+"ln_attn_beta");
+    names.push_back(p+"ln_mlp_gamma");
+    names.push_back(p+"ln_mlp_beta");
+  }
+  names.push_back("w_lm");
+  names.push_back("b_lm");
+  names.push_back("ln_final_gamma");
+  names.push_back("ln_final_beta");
+  for (int li = 0; li < n; ++li) {
+    std::string p = "L" + std::to_string(li) + "_";
+    names.push_back(p+"swiglu_gate"); names.push_back(p+"swiglu_gate_b");
+    names.push_back(p+"swiglu_up");   names.push_back(p+"swiglu_up_b");
+    names.push_back(p+"swiglu_down"); names.push_back(p+"swiglu_down_b");
+  }
+  for (int li = 0; li < n; ++li) {
+    std::string p = "L" + std::to_string(li) + "_";
+    names.push_back(p+"moe_router_w"); names.push_back(p+"moe_router_b");
+    for (int e = 0; e < gpt.cfg().n_experts; ++e) {
+      std::string ep = p + "e" + std::to_string(e) + "_";
+      names.push_back(ep+"wfc"); names.push_back(ep+"bfc");
+      names.push_back(ep+"wout"); names.push_back(ep+"bout");
+    }
+  }
+  return names;
+}
+
+void export_weights(const std::string& path, const std::string& format, const model::TinyGPT& gpt) {
+  auto pc = gpt.parameters_const().tensors;
+  auto names = param_names(gpt);
+
+  if (format == "json") {
+    std::ofstream out(path);
+    if (!out) throw std::runtime_error("failed to write: " + path);
+    out << "{";
+    for (std::size_t i = 0; i < pc.size() && i < names.size(); ++i) {
+      if (i > 0) out << ",";
+      out << "\"" << names[i] << "\":{\"shape\":[";
+      const auto& s = pc[i]->shape;
+      for (std::size_t j = 0; j < s.size(); ++j) { if(j>0) out<<","; out<<s[j]; }
+      out << "],\"data\":[";
+      const std::size_t N = pc[i]->numel();
+      const float* d = pc[i]->data->data();
+      for (std::size_t j = 0; j < N; ++j) { if(j>0) out<<","; out << d[j]; }
+      out << "]}";
+    }
+    out << "}\n";
+  } else if (format == "safetensors") {
+    // Safetensors: 8-byte header (u64 LE) + JSON metadata + concatenated float data
+    std::ostringstream meta;
+    meta << "{";
+    std::uint64_t offset = 0;
+    for (std::size_t i = 0; i < pc.size() && i < names.size(); ++i) {
+      if (i > 0) meta << ",";
+      const std::uint64_t nbytes = pc[i]->numel() * sizeof(float);
+      meta << "\"" << names[i] << "\":{\"dtype\":\"F32\",\"shape\":[";
+      const auto& s = pc[i]->shape;
+      for (std::size_t j = 0; j < s.size(); ++j) { if(j>0) meta<<","; meta<<s[j]; }
+      meta << "],\"data_offsets\":[" << offset << "," << (offset+nbytes) << "]}";
+      offset += nbytes;
+    }
+    meta << "}";
+    std::string meta_str = meta.str();
+    std::uint64_t header_size = static_cast<std::uint64_t>(meta_str.size());
+    std::ofstream out(path, std::ios::binary);
+    if (!out) throw std::runtime_error("failed to write: " + path);
+    out.write(reinterpret_cast<const char*>(&header_size), 8);
+    out.write(meta_str.data(), static_cast<std::streamsize>(meta_str.size()));
+    for (std::size_t i = 0; i < pc.size(); ++i) {
+      const std::size_t nbytes = pc[i]->numel() * sizeof(float);
+      out.write(reinterpret_cast<const char*>(pc[i]->data->data()), static_cast<std::streamsize>(nbytes));
+    }
+  } else {
+    // "binary" (default): reuse checkpoint binary format without optimizer state
+    optim::AdamWConfig oc; oc.lr = 0.0f;
+    optim::AdamW opt(oc);
+    save(path, gpt, opt, 0, false);
   }
 }
 

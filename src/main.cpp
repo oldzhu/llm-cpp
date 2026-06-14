@@ -1,10 +1,13 @@
 #include <chrono>
 #include <algorithm>
+#include <atomic>
 #include <cstdint>
+#include <fstream>
 #include <iostream>
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <vector>
 
@@ -17,6 +20,7 @@
 
 #include "tokenizer/byte_tokenizer.h"
 #include "tokenizer/bpe_tokenizer.h"
+#include "variants/kvcache/kvcache_attention.h"
 
 struct Args {
     // Tokenizer
@@ -31,6 +35,12 @@ struct Args {
   int layers = 1;
   float lr = 3e-4f;
   std::uint64_t seed = 1;
+  std::string norm_type = "layernorm"; // "layernorm" or "rmsnorm"
+  std::string mlp_type = "gelu";       // "gelu" or "swiglu" or "moe"
+  std::string attn_type = "1head";     // "1head", "mha", "gqa"
+  std::string pos_type = "wpe";        // "wpe", "rope"
+  int attn_n_heads = 1;
+  int attn_n_kv = 1;
 
   // Checkpoints
   std::string load_prefix;
@@ -59,6 +69,20 @@ struct Args {
 
   bool ascii_only = false;
   bool escape_bytes = false;
+  bool use_kvcache = false;
+  bool debug_layer = false;
+  std::string log_loss_path;
+  std::string tokenize_output; // tokenize data and write token IDs here
+  std::string token_data;      // load pre-tokenized token IDs from here
+  bool serve_mode = false;     // interactive stdin→stdout JSON generation loop
+
+  // Web UI integration
+  bool progress_json = false;
+  int  progress_grads = 0;
+  bool pipe_stdin = false;
+  std::string dump_weights_path;
+  std::string dump_weights_format = "binary";
+  int save_interval = 0;
 };
 
 static Args parse_args(int argc, char** argv) {
@@ -94,6 +118,24 @@ static Args parse_args(int argc, char** argv) {
     else if (k == "--sanity-preview") a.sanity_preview = std::stoi(need("--sanity-preview"));
     else if (k == "--ascii-only") a.ascii_only = (std::stoi(need("--ascii-only")) != 0);
     else if (k == "--escape-bytes") a.escape_bytes = (std::stoi(need("--escape-bytes")) != 0);
+    else if (k == "--kvcache") a.use_kvcache = true;
+    else if (k == "--debug-layer") a.debug_layer = true;
+    else if (k == "--log-loss") a.log_loss_path = need("--log-loss");
+    else if (k == "--tokenize-output") a.tokenize_output = need("--tokenize-output");
+    else if (k == "--token-data") a.token_data = need("--token-data");
+    else if (k == "--progress-json") a.progress_json = true;
+    else if (k == "--progress-grads") a.progress_grads = std::stoi(need("--progress-grads"));
+    else if (k == "--pipe-stdin") a.pipe_stdin = true;
+    else if (k == "--dump-weights") a.dump_weights_path = need("--dump-weights");
+    else if (k == "--dump-weights-format") a.dump_weights_format = need("--dump-weights-format");
+    else if (k == "--save-interval") a.save_interval = std::stoi(need("--save-interval"));
+    else if (k == "--serve") a.serve_mode = true;
+    else if (k == "--norm") a.norm_type = need("--norm");
+    else if (k == "--mlp") a.mlp_type = need("--mlp");
+    else if (k == "--attn") a.attn_type = need("--attn");
+    else if (k == "--pos") a.pos_type = need("--pos");
+    else if (k == "--n-heads") a.attn_n_heads = std::stoi(need("--n-heads"));
+    else if (k == "--n-kv") a.attn_n_kv = std::stoi(need("--n-kv"));
     else if (k == "--tokenizer") a.tokenizer_type = need("--tokenizer");
     else if (k == "--bpe-vocab") a.bpe_vocab_path = need("--bpe-vocab");
     else if (k == "--bpe-merges") a.bpe_merges_path = need("--bpe-merges");
@@ -102,7 +144,7 @@ static Args parse_args(int argc, char** argv) {
           << "Usage:\n"
           << "  train_gpt --data <path> [--steps N] [--batch B] [--seq T] [--dmodel C] [--layers L] [--lr LR] [--seed S] [--save PREFIX] [--tokenizer byte|bpe] [--bpe-vocab <file>] [--bpe-merges <file>]\n"
           << "  train_gpt --load PREFIX [--steps N] [--data <path>] [--save PREFIX] [--save-opt 0|1]\n"
-            << "  train_gpt [--data <path> --steps N ...] --prompt <text> [--gen N] [--temp X] [--topk K] [--print-next-top N] [--print-next-top-each-step 0|1] [--ascii-only 0|1] [--escape-bytes 0|1] [--load PREFIX] [--tokenizer byte|bpe] [--bpe-vocab <file>] [--bpe-merges <file>]\n"
+            << "  train_gpt [--data <path> --steps N ...] --prompt <text> [--gen N] [--temp X] [--topk K] [--print-next-top N] [--print-next-top-each-step 0|1] [--ascii-only 0|1] [--escape-bytes 0|1] [--load PREFIX] [--tokenizer byte|bpe] [--bpe-vocab <file>] [--bpe-merges <file>] [--kvcache]\n"
             << "  train_gpt --data <path> --steps 0 --sanity-next-from-data N [--sanity-ctx T] [--sanity-top K] [--load PREFIX]\n"
             << "  train_gpt --data <path> --steps 0 --sanity-offset OFF [--sanity-ctx T] [--sanity-top K] [--sanity-preview N] [--load PREFIX]\n\n"
           << "Notes:\n"
@@ -113,8 +155,8 @@ static Args parse_args(int argc, char** argv) {
       throw std::runtime_error("unknown arg: " + k);
     }
   }
-  if (a.steps > 0 && a.data_path.empty()) {
-    throw std::runtime_error("--data is required when --steps > 0");
+  if (a.steps > 0 && a.data_path.empty() && a.token_data.empty()) {
+    throw std::runtime_error("--data or --token-data is required when --steps > 0");
   }
   if (a.sanity_next_from_data > 0 && a.data_path.empty()) {
     throw std::runtime_error("--data is required when --sanity-next-from-data > 0");
@@ -132,6 +174,67 @@ static Args parse_args(int argc, char** argv) {
   if (a.sanity_offset < -1) throw std::runtime_error("--sanity-offset must be >= 0 (or -1 to disable)");
   if (a.sanity_preview < 0) throw std::runtime_error("--sanity-preview must be >= 0");
   return a;
+}
+
+// Global stop flag for graceful shutdown via stdin
+static std::atomic<bool> g_stop_requested{false};
+
+static void stdin_reader_thread() {
+  std::string line;
+  while (std::getline(std::cin, line)) {
+    if (line == "EXIT") {
+      g_stop_requested.store(true);
+      break;
+    }
+  }
+}
+
+// Helper: write named weight tensor stats as JSON fragment
+static void write_weight_stats_json(std::ostream& os, const model::TinyGPT& gpt) {
+  auto pc = gpt.parameters_const();
+  const int n_layers = gpt.cfg().n_layers;
+  os << "\"w_stats\":{";
+  // Build name list matching parameter order
+  struct NamedIdx { std::string name; int idx; };
+  std::vector<NamedIdx> names = {{"wte",0}, {"wpe",1}};
+  for (int li = 0; li < n_layers; ++li) {
+    const int b = 2 + li * 12;
+    std::string p = "L"+std::to_string(li)+"_";
+    names.push_back({p+"w_qkv", b+0});
+    names.push_back({p+"b_qkv", b+1});
+    names.push_back({p+"w_proj", b+2});
+    names.push_back({p+"b_proj", b+3});
+    names.push_back({p+"w_fc", b+4});
+    names.push_back({p+"b_fc", b+5});
+    names.push_back({p+"w_out", b+6});
+    names.push_back({p+"b_out", b+7});
+    names.push_back({p+"ln_attn_gamma", b+8});
+    names.push_back({p+"ln_attn_beta", b+9});
+    names.push_back({p+"ln_mlp_gamma", b+10});
+    names.push_back({p+"ln_mlp_beta", b+11});
+  }
+  names.push_back({"w_lm", 2 + n_layers*12 + 0});
+  names.push_back({"b_lm", 2 + n_layers*12 + 1});
+  names.push_back({"ln_final_gamma", 2 + n_layers*12 + 2});
+  names.push_back({"ln_final_beta", 2 + n_layers*12 + 3});
+
+  bool first = true;
+  for (auto& ni : names) {
+    if (ni.idx >= static_cast<int>(pc.tensors.size())) continue;
+    const float* d = pc.tensors[ni.idx]->data->data();
+    const std::size_t N = pc.tensors[ni.idx]->numel();
+    if (N == 0) continue;
+    float mn = d[0], mx = d[0], sum = 0.0f, sum2 = 0.0f;
+    for (std::size_t i = 0; i < N; ++i) {
+      float v = d[i]; if (v<mn) mn=v; if (v>mx) mx=v; sum+=v; sum2+=v*v;
+    }
+    float mean = sum / static_cast<float>(N);
+    float rms = std::sqrt(sum2 / static_cast<float>(N));
+    if (!first) os << ",";
+    first = false;
+    os << "\"" << ni.name << "\":{" << "\"mean\":" << mean << ",\"rms\":" << rms << ",\"min\":" << mn << ",\"max\":" << mx << "}";
+  }
+  os << "}";
 }
 
 
@@ -316,6 +419,19 @@ static std::string bytes_to_preview(const std::vector<std::uint8_t>& bytes,
   return out;
 }
 
+static void print_tensor_stats(const char* label, const float* data, int N) {
+  if (N <= 0) return;
+  float mn = data[0], mx = data[0], sum = 0.0f, sum2 = 0.0f;
+  for (int i = 0; i < N; ++i) {
+    const float v = data[i];
+    if (v < mn) mn = v; if (v > mx) mx = v;
+    sum += v; sum2 += v * v;
+  }
+  const float mean = sum / static_cast<float>(N);
+  const float rms = std::sqrt(sum2 / static_cast<float>(N));
+  std::cout << "  " << label << " [" << N << "]  mean=" << mean << "  rms=" << rms << "  min=" << mn << "  max=" << mx << "\n";
+}
+
 static void print_next_token_distribution(const float* logits,
                                           int V,
                                           float temperature,
@@ -481,6 +597,95 @@ static void sanity_check_next_at_offset(model::TinyGPT& gpt,
   }
 }
 
+static void generate_kvcache(model::TinyGPT& gpt,
+                              const std::string& prompt,
+                              int gen_tokens,
+                              float temperature,
+                              int topk,
+                              int print_next_top,
+                              bool print_next_each_step,
+                              bool ascii_only,
+                              bool escape_bytes,
+                              bool debug_layer,
+                              util::Rng& rng,
+                              const Tokenizer& tokenizer) {
+  std::vector<std::int32_t> tokens = encode_prompt(prompt, tokenizer);
+  if (tokens.empty()) {
+    tokens.push_back(static_cast<std::int32_t>('\n'));
+  }
+
+  const bool is_byte_tokenizer = (dynamic_cast<const ByteTokenizer*>(&tokenizer) != nullptr);
+  if (!is_byte_tokenizer && (ascii_only || escape_bytes)) {
+    throw std::runtime_error("--ascii-only/--escape-bytes are only supported with the byte tokenizer (vocab=256)");
+  }
+
+  std::cout << prompt;
+  std::cout.flush();
+
+  nn::GradMode no_grad(false);
+  const int V = gpt.cfg().vocab_size;
+  const int C = gpt.cfg().d_model;
+  const int n_layers = gpt.cfg().n_layers;
+  const int maxT = gpt.cfg().seq_len;
+  const int B = 1;
+
+  if (static_cast<int>(tokens.size()) > maxT) {
+    tokens.erase(tokens.begin(), tokens.end() - maxT);
+  }
+
+  std::vector<nn::variants::kvcache::KVCache> layer_caches;
+  layer_caches.reserve(static_cast<std::size_t>(n_layers));
+  for (int li = 0; li < n_layers; ++li) {
+    layer_caches.emplace_back(B, maxT, C);
+  }
+
+  const int T_init = static_cast<int>(tokens.size());
+
+  nn::Tensor logits = nn::variants::kvcache::model_prefill(gpt, tokens, B, T_init, layer_caches);
+
+  const std::vector<int> allowed = ascii_only ? allowed_indices_ascii(V) : std::vector<int>();
+
+  for (int step = 0; step < gen_tokens; ++step) {
+    const std::size_t base = static_cast<std::size_t>(T_init + step - 1) * static_cast<std::size_t>(V);
+
+    if (step == 0) {
+      if (print_next_top > 0) {
+        print_next_token_distribution(logits.data->data() + base, V, temperature, print_next_top, ascii_only, escape_bytes);
+      }
+      const int next = ascii_only
+                           ? sample_from_logits_filtered(logits.data->data() + base, V, rng, temperature, topk, allowed)
+                           : sample_from_logits(logits.data->data() + base, V, rng, temperature, topk);
+      tokens.push_back(next);
+      if (is_byte_tokenizer) {
+        print_generated_byte(next, escape_bytes);
+      } else {
+        std::cout << decode_one_token(next, tokenizer);
+      }
+      std::cout.flush();
+    } else {
+      const int position = T_init + step - 1;
+      logits = nn::variants::kvcache::model_step(gpt, tokens.back(), B, position, layer_caches);
+
+      if (print_next_top > 0 && print_next_each_step) {
+        std::cout << "\n[gen step " << step << "]";
+        print_next_token_distribution(logits.data->data(), V, temperature, print_next_top, ascii_only, escape_bytes);
+      }
+
+      const int next = ascii_only
+                           ? sample_from_logits_filtered(logits.data->data(), V, rng, temperature, topk, allowed)
+                           : sample_from_logits(logits.data->data(), V, rng, temperature, topk);
+      tokens.push_back(next);
+      if (is_byte_tokenizer) {
+        print_generated_byte(next, escape_bytes);
+      } else {
+        std::cout << decode_one_token(next, tokenizer);
+      }
+      std::cout.flush();
+    }
+  }
+  std::cout << "\n";
+}
+
 static void generate(model::TinyGPT& gpt,
                      const std::string& prompt,
                      int gen_tokens,
@@ -490,6 +695,7 @@ static void generate(model::TinyGPT& gpt,
                      bool print_next_each_step,
                      bool ascii_only,
                      bool escape_bytes,
+                     bool debug_layer,
                      util::Rng& rng,
                      const Tokenizer& tokenizer) {
   std::vector<std::int32_t> tokens = encode_prompt(prompt, tokenizer);
@@ -517,6 +723,22 @@ static void generate(model::TinyGPT& gpt,
 
     nn::Tensor logits = gpt.forward_logits(ctx, 1, T); // [1,T,V]
     const std::size_t base = static_cast<std::size_t>(T - 1) * static_cast<std::size_t>(V);
+
+    if (debug_layer && (print_next_each_step || step == 0)) {
+      // Print per-layer weight and logit stats
+      const model::Config& cfg = gpt.cfg();
+      // Re-run forward with debug using a helper — for simplicity, print logits stats
+      print_tensor_stats("logits[last]", logits.data->data() + base, V);
+      // Print embedding + positional stats via the model's params
+      auto pc = gpt.parameters_const();
+      print_tensor_stats("wte", pc.tensors[0]->data->data(), static_cast<int>(pc.tensors[0]->numel()));
+      print_tensor_stats("wpe", pc.tensors[1]->data->data(), static_cast<int>(pc.tensors[1]->numel()));
+      for (int li = 0; li < cfg.n_layers; ++li) {
+        const int bi = 2 + li * 12;
+        std::string prefix = "L" + std::to_string(li) + " w_qkv";
+        print_tensor_stats(prefix.c_str(), pc.tensors[bi]->data->data(), static_cast<int>(pc.tensors[bi]->numel()));
+      }
+    }
 
     if (print_next_top > 0 && (print_next_each_step || step == 0)) {
       if (print_next_each_step) {
@@ -560,19 +782,64 @@ int main(int argc, char** argv) {
       throw std::runtime_error("Unknown --tokenizer type: " + args.tokenizer_type);
     }
 
-    // The current training/sanity data pipeline is byte-based (ByteDataset).
-    // Prevent confusing runs where the model config/vocab does not match the data.
-    if ((args.steps > 0 || args.sanity_next_from_data > 0 || args.sanity_offset >= 0) && args.tokenizer_type != "byte") {
-      throw std::runtime_error("Training and dataset-based sanity checks currently require --tokenizer byte (ByteDataset). "
-                               "Subword/BPE end-to-end training needs a token-id dataset path.");
+    // Tokenize mode: read data file, tokenize, write token IDs
+    if (!args.tokenize_output.empty()) {
+      if (args.tokenizer_type != "bpe") throw std::runtime_error("--tokenize-output requires --tokenizer bpe");
+      if (args.data_path.empty()) throw std::runtime_error("--tokenize-output requires --data");
+      auto bytes = util::read_file_bytes(args.data_path);
+      std::string text(bytes.begin(), bytes.end());
+      std::vector<int> ids = tokenizer->encode(text);
+      std::cout << "Tokenized " << text.size() << " chars → " << ids.size() << " tokens (ratio " << static_cast<float>(ids.size())/static_cast<float>(text.size()) << ")\n";
+      // Write binary int32
+      std::ofstream out(args.tokenize_output, std::ios::binary);
+      if (!out) throw std::runtime_error("Failed to open tokenize output: " + args.tokenize_output);
+      for (int id : ids) {
+        std::int32_t v = static_cast<std::int32_t>(id);
+        out.write(reinterpret_cast<const char*>(&v), sizeof(v));
+      }
+      std::cout << "Saved " << ids.size() << " token IDs to " << args.tokenize_output << "\n";
+      return 0;
     }
 
+    // Data pipeline: byte (for --tokenizer byte) or token-ID (for --tokenizer bpe)
+    std::vector<std::uint8_t> data_bytes;
+    std::vector<std::int32_t> token_ids;
+    std::unique_ptr<data::ByteDataset> ds;
+    std::unique_ptr<data::TokenDataset> tds;
+
+    if (args.tokenizer_type == "bpe" && (args.steps > 0)) {
+      if (args.token_data.empty()) throw std::runtime_error("BPE training requires --token-data <file> (use --tokenize-output first)");
+      std::ifstream tfin(args.token_data, std::ios::binary);
+      if (!tfin) throw std::runtime_error("Failed to open token data: " + args.token_data);
+      tfin.seekg(0, std::ios::end);
+      std::size_t fsize = static_cast<std::size_t>(tfin.tellg());
+      tfin.seekg(0);
+      std::size_t count = fsize / sizeof(std::int32_t);
+      token_ids.resize(count);
+      tfin.read(reinterpret_cast<char*>(token_ids.data()), static_cast<std::streamsize>(fsize));
+      std::cout << "Loaded " << count << " BPE token IDs from " << args.token_data << "\n";
+      tds = std::make_unique<data::TokenDataset>(token_ids);
+    } else if (!args.data_path.empty() && args.steps > 0) {
+      data_bytes = util::read_file_bytes(args.data_path);
+      ds = std::make_unique<data::ByteDataset>(data_bytes);
+    }
+
+    // Sanity checks: always byte-based (reads from text file)
+    if (!args.data_path.empty() && (args.sanity_next_from_data > 0 || args.sanity_offset >= 0)) {
+      data_bytes = util::read_file_bytes(args.data_path);
+    }
 
     model::Config cfg;
     cfg.vocab_size = tokenizer->vocab_size();
     cfg.seq_len = args.seq;
     cfg.d_model = args.dmodel;
     cfg.n_layers = args.layers;
+    cfg.norm_type = (args.norm_type == "rmsnorm") ? 1 : 0;
+    cfg.mlp_type  = (args.mlp_type == "swiglu") ? 1 : ((args.mlp_type == "moe") ? 2 : 0);
+    cfg.attn_type = (args.attn_type == "mha") ? 1 : ((args.attn_type == "gqa") ? 2 : 0);
+    cfg.pos_type  = (args.pos_type == "rope") ? 1 : 0;
+    cfg.attn_n_heads = args.attn_n_heads > 0 ? args.attn_n_heads : 1;
+    cfg.attn_n_kv = args.attn_n_kv > 0 ? args.attn_n_kv : 1;
 
     optim::AdamWConfig ocfg;
     ocfg.lr = args.lr;
@@ -584,15 +851,6 @@ int main(int argc, char** argv) {
       cfg = lc.model;
       ocfg = lc.optim;
       start_step = lc.step;
-    }
-
-    std::vector<std::uint8_t> data_bytes;
-    std::unique_ptr<data::ByteDataset> ds;
-    if (!args.data_path.empty() && (args.steps > 0 || args.sanity_next_from_data > 0 || args.sanity_offset >= 0)) {
-      data_bytes = util::read_file_bytes(args.data_path);
-      if (args.steps > 0) {
-        ds = std::make_unique<data::ByteDataset>(data_bytes);
-      }
     }
 
     model::TinyGPT gpt(cfg, args.seed);
@@ -607,28 +865,138 @@ int main(int argc, char** argv) {
 
     util::Rng rng(args.seed ^ 0xDEADBEEF);
 
+    // Start stdin reader for graceful shutdown
+    std::thread stdin_thread;
+    if (args.pipe_stdin) {
+      stdin_thread = std::thread(stdin_reader_thread);
+    }
+
     if (args.steps > 0) {
-      if (!ds) throw std::runtime_error("internal: dataset not initialized");
+      if (!ds && !tds) throw std::runtime_error("internal: dataset not initialized");
       const int train_seq = std::min(args.seq, gpt.cfg().seq_len);
       const auto t0 = std::chrono::high_resolution_clock::now();
       for (int local = 1; local <= args.steps; ++local) {
         const std::uint64_t step = start_step + static_cast<std::uint64_t>(local);
-        data::Batch batch = ds->sample_batch(args.batch, train_seq, rng);
+        data::Batch batch = ds ? ds->sample_batch(args.batch, train_seq, rng)
+                               : tds->sample_batch(args.batch, train_seq, rng);
 
         gpt.zero_grad();
         nn::Tensor loss = gpt.loss(batch.x, batch.y, batch.B, batch.T);
         loss.backward();
 
         opt.step(gpt.parameters().tensors);
+        const auto tn = std::chrono::high_resolution_clock::now();
+        const double sec = std::chrono::duration<double>(tn - t0).count();
 
-        if (local == 1 || local % 10 == 0) {
-          const auto tn = std::chrono::high_resolution_clock::now();
-          const double sec = std::chrono::duration<double>(tn - t0).count();
+        if (args.progress_json) {
+          std::cout << "{\"type\":\"step\"" << ",\"step\":" << step << ",\"loss\":" << (*loss.data)[0] << ",\"time\":" << sec;
+          if (args.progress_grads > 0 && local % args.progress_grads == 0) {
+            std::cout << ",";
+            write_weight_stats_json(std::cout, gpt);
+          }
+          std::cout << "}\n" << std::flush;
+        } else if (local == 1 || local % 10 == 0) {
           std::cout << "step " << step << "  (" << local << "/" << args.steps << ")  loss=" << (*loss.data)[0] << "  time=" << sec << "s\n";
+        }
+
+        if (!args.log_loss_path.empty() && (local == 1 || local % 10 == 0)) {
+          std::ofstream lf(args.log_loss_path, std::ios::app);
+          if (lf) {
+            if (local == 1) lf << "step,loss,time\n";
+            lf << step << "," << (*loss.data)[0] << "," << sec << "\n";
+          }
+        }
+
+        // Periodic checkpoint save
+        if (args.save_interval > 0 && !args.save_prefix.empty() && local % args.save_interval == 0) {
+          ckpt::save(args.save_prefix, gpt, opt, step, args.save_optim);
+        }
+
+        // Graceful shutdown via stdin
+        if (args.pipe_stdin && g_stop_requested.load()) {
+          if (!args.save_prefix.empty()) {
+            ckpt::save(args.save_prefix, gpt, opt, step, args.save_optim);
+            if (args.progress_json) std::cout << "{\"type\":\"saved\",\"step\":" << step << ",\"prefix\":\"" << args.save_prefix << "\"}\n" << std::flush;
+          }
+          if (args.progress_json) std::cout << "{\"type\":\"stopped\",\"step\":" << step << "}\n" << std::flush;
+          start_step = step;
+          goto training_done;
         }
       }
 
       start_step += static_cast<std::uint64_t>(args.steps);
+    }
+    training_done:
+
+    // === Serve mode: interactive generation via stdin/stdout JSON ===
+    if (args.serve_mode) {
+      nn::GradMode no_grad(false);
+      std::string line;
+      while (std::getline(std::cin, line)) {
+        if (line.empty() || line == "EXIT") break;
+        // Parse JSON: {"prompt":"...","temp":0.8,"topk":40,"gen":50}
+        std::string prompt;
+        float temp = 0.8f; int topk = 40, gen = 50;
+        // Simple key-value parse (avoids JSON dependency)
+        auto extract = [&](const std::string& key) -> std::string {
+          std::size_t p = line.find("\"" + key + "\"");
+          if (p == std::string::npos) return "";
+          p = line.find(":", p + key.size() + 2);
+          if (p == std::string::npos) return "";
+          p++;
+          while (p < line.size() && (line[p] == ' ' || line[p] == '\t')) p++;
+          if (p >= line.size()) return "";
+          if (line[p] == '"') {
+            p++; std::size_t e = line.find("\"", p);
+            if (e != std::string::npos) return line.substr(p, e - p);
+          } else {
+            std::size_t e = p;
+            while (e < line.size() && (std::isdigit(line[e]) || line[e] == '.' || line[e] == '-')) e++;
+            return line.substr(p, e - p);
+          }
+          return "";
+        };
+        prompt = extract("prompt");
+        std::string ts = extract("temp"); if (!ts.empty()) temp = std::stof(ts);
+        std::string tks = extract("topk"); if (!tks.empty()) topk = std::stoi(tks);
+        std::string gs = extract("gen"); if (!gs.empty()) gen = std::stoi(gs);
+
+        if (prompt.empty()) {
+          std::cout << "{\"error\":\"missing prompt\"}\n" << std::flush;
+          continue;
+        }
+
+        std::vector<std::int32_t> tokens = encode_prompt(prompt, *tokenizer);
+        if (tokens.empty()) tokens.push_back(static_cast<std::int32_t>('\n'));
+
+        const int V = gpt.cfg().vocab_size;
+        util::Rng srng(args.seed ^ 0xABCDEF123456ULL);
+
+        for (int step = 0; step < gen; ++step) {
+          const int maxT = gpt.cfg().seq_len;
+          const int T = static_cast<int>(std::min<std::size_t>(tokens.size(), static_cast<std::size_t>(maxT)));
+          std::vector<std::int32_t> ctx(tokens.end() - T, tokens.end());
+          nn::Tensor logits = gpt.forward_logits(ctx, 1, T);
+          const std::size_t base = static_cast<std::size_t>(T - 1) * static_cast<std::size_t>(V);
+          int next = sample_from_logits(logits.data->data() + base, V, srng, temp, topk);
+          tokens.push_back(next);
+          std::string text = decode_one_token(next, *tokenizer);
+          // Output JSON per token
+          std::cout << "{\"token\":" << next << ",\"text\":\"" << text << "\"}\n" << std::flush;
+        }
+        std::cout << "{\"done\":true}\n" << std::flush;
+      }
+      return 0;
+    }
+
+    // Join stdin thread
+    if (args.pipe_stdin && stdin_thread.joinable()) {
+      stdin_thread.detach(); // detach since we're done
+    }
+
+    // Dump weights on exit if requested
+    if (!args.dump_weights_path.empty()) {
+      ckpt::export_weights(args.dump_weights_path, args.dump_weights_format, gpt);
     }
 
     if (args.sanity_next_from_data > 0) {
@@ -653,17 +1021,33 @@ int main(int argc, char** argv) {
 
     if (!args.prompt.empty()) {
       util::Rng grng(args.seed ^ 0xABCDEF123456ULL);
-      generate(gpt,
-           args.prompt,
-           args.gen_tokens,
-           args.temperature,
-           args.topk,
-           args.print_next_top,
-           args.print_next_each_step,
-           args.ascii_only,
-           args.escape_bytes,
-           grng,
-           *tokenizer);
+      if (args.use_kvcache) {
+        generate_kvcache(gpt,
+             args.prompt,
+             args.gen_tokens,
+             args.temperature,
+             args.topk,
+             args.print_next_top,
+             args.print_next_each_step,
+             args.ascii_only,
+             args.escape_bytes,
+             args.debug_layer,
+             grng,
+             *tokenizer);
+      } else {
+        generate(gpt,
+             args.prompt,
+             args.gen_tokens,
+             args.temperature,
+             args.topk,
+             args.print_next_top,
+             args.print_next_each_step,
+             args.ascii_only,
+             args.escape_bytes,
+             args.debug_layer,
+             grng,
+              *tokenizer);
+      }
     }
 
     return 0;

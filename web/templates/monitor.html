@@ -1,0 +1,45 @@
+<div class="monitor-panel">
+  <div class="progress-row">
+    <label data-i18n="monitor.progress">Progress:</label>
+    <progress id="train-progress" value="0" max="100" style="width:100%;height:24px"></progress>
+    <span id="step-label">0 / 0</span>
+    <span id="eta-label" data-i18n="monitor.eta">ETA: --</span>
+  </div>
+
+  <div class="metrics-row">
+    <div class="metric-card">
+      <span class="metric-label" data-i18n="monitor.loss">Loss</span>
+      <span id="loss-value" class="metric-value">--</span>
+    </div>
+    <div class="metric-card">
+      <span class="metric-label" data-i18n="monitor.step">Step</span>
+      <span id="step-value" class="metric-value">0</span>
+    </div>
+    <div class="metric-card">
+      <span class="metric-label" data-i18n="monitor.time">Time</span>
+      <span id="time-value" class="metric-value">--</span>
+    </div>
+    <div class="metric-card">
+      <span class="metric-label" data-i18n="monitor.lossPerSec">Loss/sec</span>
+      <span id="steps-sec" class="metric-value">--</span>
+    </div>
+  </div>
+
+  <div class="chart-container">
+    <canvas id="loss-chart" width="600" height="280"></canvas>
+  </div>
+
+  <div class="weights-panel">
+    <h3 data-i18n="monitor.weights">Weight Statistics</h3>
+    <table id="weights-table">
+      <thead><tr>
+        <th data-i18n="monitor.param">Parameter</th>
+        <th data-i18n="monitor.mean">Mean</th>
+        <th data-i18n="monitor.rms">RMS</th>
+        <th data-i18n="monitor.min">Min</th>
+        <th data-i18n="monitor.max">Max</th>
+      </tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+</div>

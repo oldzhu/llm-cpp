@@ -19,11 +19,20 @@
 - `architecture/hidden_states_vs_attention_matrices.zh-CN.md`
 
 变体：
-- `variants/mha/README.zh-CN.md`
-- `variants/mha/learn_by_hand.zh-CN.md`
-- `variants/mha/what_changed_vs_core.zh-CN.md`
-- `variants/mha/why_multi_head_attention.zh-CN.md`
-- `variants/mha/sample_processing_walkthrough.zh-CN.md`
+- `variants/mha/README.zh-CN.md` — 多头注意力变体概述
+- `variants/mha/learn_by_hand.zh-CN.md` — 可手算的微型 MHA 例子
+- `variants/mha/what_changed_vs_core.zh-CN.md` — MHA 扩展添加/变更了哪些内容
+- `variants/mha/why_multi_head_attention.zh-CN.md` — 为什么 MHA 有意义（超越并行性）
+- `variants/mha/sample_processing_walkthrough.zh-CN.md` — 逐步 shape/offset：1-head vs MHA
+- `variants/kvcache/README.zh-CN.md` — KV-cache 增量生成变体
+- `variants/kvcache/learn_by_hand.zh-CN.md` — 可手算的 KV-cache 例子
+- `variants/kvcache/what_changed_vs_core.zh-CN.md` — KV-cache 扩展添加/变更了哪些内容
+- `variants/rope/README.zh-CN.md` — RoPE（旋转位置编码）变体
+- `variants/rope/learn_by_hand.zh-CN.md` — 可手算的 RoPE 例子
+- `variants/rope/what_changed_vs_core.zh-CN.md` — RoPE 扩展添加/变更了哪些内容
+- `variants/gqa/README.zh-CN.md` — GQA（分组查询注意力）变体
+- `variants/gqa/learn_by_hand.zh-CN.md` — 可手算的 GQA 例子
+- `variants/gqa/what_changed_vs_core.zh-CN.md` — GQA 扩展添加/变更了哪些内容
 
 笔记：
 - `notes/2026-01-16_project_goal_and_next_steps.zh-CN.md`

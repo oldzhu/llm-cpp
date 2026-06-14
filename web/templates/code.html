@@ -1,0 +1,30 @@
+<div class="code-explorer">
+  <div class="code-sidebar">
+    <h3>Files</h3>
+    <div id="file-tree" class="file-tree"></div>
+  </div>
+  <div class="code-main">
+    <div class="code-header">
+      <span id="code-filename">Select a file to view</span>
+      <span id="code-lines-info"></span>
+    </div>
+    <div id="arch-diagram-container" class="arch-container"></div>
+    <div id="code-viewer" class="code-viewer">
+      <div class="code-empty">← Select a file from the tree to browse source code</div>
+    </div>
+    <div class="code-actions" id="code-actions" style="display:none">
+      <button onclick="codeUI.explainSelection()">🤖 Explain Selected Lines</button>
+      <span id="selection-info"></span>
+    </div>
+  </div>
+  <div class="code-ai-panel">
+    <h3>AI Assistant</h3>
+    <div id="ai-response" class="ai-response">
+      <div class="ai-placeholder">Select code and click "Explain" to get AI analysis</div>
+    </div>
+    <div class="ai-input-row">
+      <input type="text" id="ai-question" placeholder="Ask a question about the code..." />
+      <button onclick="codeUI.askQuestion()">Ask</button>
+    </div>
+  </div>
+</div>

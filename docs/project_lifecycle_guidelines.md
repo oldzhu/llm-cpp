@@ -122,9 +122,27 @@ At least one of:
 
 Before merging:
 - `ctest` passes
+- `pytest tests/python/` passes
 - docs are linked from `docs/README.md`
 - feature has at least one test
 - code comments explain shapes and formulas
+
+### 3.5 Test-first enforcement (added 2026-06)
+
+This project follows test-first development:
+
+1. **Write the test FIRST** — test must fail before implementation begins
+2. **Implement** — make the test pass
+3. **Run ALL layers** — `ctest`, `pytest`, (and when available: `npm test`, playwright)
+4. **Commit** — only when every layer is green
+
+Tests cover four layers:
+- **C++** (ctest) — ops, model, backends, tokenizer, CLI
+- **Python** (pytest) — server API, config, AI chat, code explorer, import script
+- **JavaScript** (vitest) — i18n, settings, charts, architecture, code UI
+- **E2E** (playwright) — full browser interaction flow
+
+See `docs/testing_guide.md` for setup and usage.
 
 
 ## 4) CPU→GPU progression strategy

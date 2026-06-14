@@ -296,6 +296,37 @@ Tensor gelu(const Tensor& x) {
   return out;
 }
 
+Tensor silu(const Tensor& x) {
+  // SiLU / Swish: y = x * sigmoid(x) = x / (1 + exp(-x))
+  Tensor out = Tensor::zeros(x.shape, want_grad(x));
+  const std::size_t n = out.numel();
+  for (std::size_t i = 0; i < n; ++i) {
+    const float v = (*x.data)[i];
+    const float sig = 1.0f / (1.0f + std::exp(-v));
+    (*out.data)[i] = v * sig;
+  }
+
+  if (out.requires_grad) {
+    out.node = std::make_shared<Node>();
+    out.node->parents = {x};
+    out.node->backward = [](Tensor& o) {
+      const Tensor& px = o.node->parents[0];
+      const std::size_t n2 = o.numel();
+      for (std::size_t i = 0; i < n2; ++i) {
+        const float v = (*px.data)[i];
+        const float sig = 1.0f / (1.0f + std::exp(-v));
+        const float y = (*o.data)[i];
+        // d/dx (x*sig(x)) = sig(x) + x * sig(x) * (1 - sig(x)) = sig(x) * (1 + x*(1-sig(x)))
+        // simpler: d/dx = sig(x) + y * (1 - sig(x))
+        const float d = sig + y * (1.0f - sig);
+        (*px.grad)[i] += (*o.grad)[i] * d;
+      }
+    };
+  }
+
+  return out;
+}
+
 Tensor layernorm_lastdim(const Tensor& x, float eps) {
   // LayerNorm over the last dimension.
   // For each "row" (all dims except the last):
@@ -351,6 +382,213 @@ Tensor layernorm_lastdim(const Tensor& x, float eps) {
           const float xhat = (*o.data)[outi * D + static_cast<std::size_t>(i)];
           const float dx = (dy - sum_dy / static_cast<float>(D) - xhat * (sum_dy_xhat / static_cast<float>(D))) * invstd[outi];
           (*px.grad)[outi * D + static_cast<std::size_t>(i)] += dx;
+        }
+      }
+    };
+  }
+
+  return out;
+}
+
+Tensor layernorm_affine(const Tensor& x, const Tensor& gamma, const Tensor& beta, float eps) {
+  // Affine LayerNorm over the last dimension.
+  // y_i = ((x_i - mean) / sqrt(var + eps)) * gamma_i + beta_i
+  // gamma: [D], beta: [D], where D = x.shape.back()
+  if (x.shape.empty()) throw std::runtime_error("layernorm_affine: empty shape");
+  const int D = x.shape.back();
+  if (gamma.shape != std::vector<int>({D})) throw std::runtime_error("layernorm_affine: gamma must be [D]");
+  if (beta.shape != std::vector<int>({D})) throw std::runtime_error("layernorm_affine: beta must be [D]");
+  const std::size_t outer = x.numel() / static_cast<std::size_t>(D);
+
+  Tensor out = Tensor::zeros(x.shape, want_grad(x) || want_grad(gamma) || want_grad(beta));
+  std::vector<float> mean(outer, 0.0f);
+  std::vector<float> invstd(outer, 0.0f);
+  std::vector<float> x_hat(outer * D, 0.0f);
+
+  for (std::size_t o = 0; o < outer; ++o) {
+    float m = 0.0f;
+    for (int i = 0; i < D; ++i) m += (*x.data)[o * D + static_cast<std::size_t>(i)];
+    m /= static_cast<float>(D);
+    mean[o] = m;
+
+    float v = 0.0f;
+    for (int i = 0; i < D; ++i) {
+      const float d = (*x.data)[o * D + static_cast<std::size_t>(i)] - m;
+      v += d * d;
+    }
+    v /= static_cast<float>(D);
+    invstd[o] = 1.0f / std::sqrt(v + eps);
+
+    for (int i = 0; i < D; ++i) {
+      const float xn = ((*x.data)[o * D + static_cast<std::size_t>(i)] - m) * invstd[o];
+      x_hat[o * D + static_cast<std::size_t>(i)] = xn;
+      (*out.data)[o * D + static_cast<std::size_t>(i)] = xn * (*gamma.data)[static_cast<std::size_t>(i)] + (*beta.data)[static_cast<std::size_t>(i)];
+    }
+  }
+
+  if (out.requires_grad) {
+    out.node = std::make_shared<Node>();
+    out.node->parents = {x, gamma, beta};
+    out.node->backward = [D, mean = std::move(mean), invstd = std::move(invstd), x_hat = std::move(x_hat)](Tensor& o) mutable {
+      const Tensor& px = o.node->parents[0];
+      const Tensor& pg = o.node->parents[1];
+      const Tensor& pb = o.node->parents[2];
+      const std::size_t outer2 = o.numel() / static_cast<std::size_t>(D);
+
+      for (std::size_t outi = 0; outi < outer2; ++outi) {
+        // Gradients for gamma and beta are accumulated per-element across outer
+        if (pg.requires_grad) {
+          for (int i = 0; i < D; ++i) {
+            (*pg.grad)[static_cast<std::size_t>(i)] += (*o.grad)[outi * D + static_cast<std::size_t>(i)] * x_hat[outi * D + static_cast<std::size_t>(i)];
+          }
+        }
+        if (pb.requires_grad) {
+          for (int i = 0; i < D; ++i) {
+            (*pb.grad)[static_cast<std::size_t>(i)] += (*o.grad)[outi * D + static_cast<std::size_t>(i)];
+          }
+        }
+
+        // Gradient for x (same logic as non-affine, but dy has been scaled by gamma)
+        if (px.requires_grad) {
+          // Reconstruct gamma-scaled grad for the x-hat domain
+          float sum_dy = 0.0f;
+          float sum_dy_xhat = 0.0f;
+          for (int i = 0; i < D; ++i) {
+            const float dy = (*o.grad)[outi * D + static_cast<std::size_t>(i)] * (*pg.data)[static_cast<std::size_t>(i)];
+            sum_dy += dy;
+            const float xh = x_hat[outi * D + static_cast<std::size_t>(i)];
+            sum_dy_xhat += dy * xh;
+          }
+          for (int i = 0; i < D; ++i) {
+            const float dy = (*o.grad)[outi * D + static_cast<std::size_t>(i)] * (*pg.data)[static_cast<std::size_t>(i)];
+            const float xh = x_hat[outi * D + static_cast<std::size_t>(i)];
+            const float dx = (dy - sum_dy / static_cast<float>(D) - xh * (sum_dy_xhat / static_cast<float>(D))) * invstd[outi];
+            (*px.grad)[outi * D + static_cast<std::size_t>(i)] += dx;
+          }
+        }
+      }
+    };
+  }
+
+  return out;
+}
+
+Tensor rmsnorm_lastdim(const Tensor& x, float eps) {
+  // RMSNorm: y_i = x_i / sqrt(mean(x^2) + eps)
+  if (x.shape.empty()) throw std::runtime_error("rmsnorm: empty shape");
+  const int D = x.shape.back();
+  const std::size_t outer = x.numel() / static_cast<std::size_t>(D);
+
+  Tensor out = Tensor::zeros(x.shape, want_grad(x));
+  std::vector<float> inv_rms(outer, 0.0f);
+
+  for (std::size_t o = 0; o < outer; ++o) {
+    float sum_sq = 0.0f;
+    for (int i = 0; i < D; ++i) {
+      const float v = (*x.data)[o * D + static_cast<std::size_t>(i)];
+      sum_sq += v * v;
+    }
+    const float rms = std::sqrt(sum_sq / static_cast<float>(D) + eps);
+    const float inv = 1.0f / rms;
+    inv_rms[o] = inv;
+
+    for (int i = 0; i < D; ++i) {
+      (*out.data)[o * D + static_cast<std::size_t>(i)] = (*x.data)[o * D + static_cast<std::size_t>(i)] * inv;
+    }
+  }
+
+  if (out.requires_grad) {
+    out.node = std::make_shared<Node>();
+    out.node->parents = {x};
+    out.node->backward = [D, inv_rms = std::move(inv_rms)](Tensor& o) mutable {
+      const Tensor& px = o.node->parents[0];
+      const std::size_t outer2 = o.numel() / static_cast<std::size_t>(D);
+      for (std::size_t outi = 0; outi < outer2; ++outi) {
+        // dL/dz_i = dL/dy_i (no affine), then:
+        // dL/dx_i = (dL/dz_i - z_i * mean(dL/dz * z)) / rms
+        float dot = 0.0f;
+        for (int i = 0; i < D; ++i) {
+          const float dy = (*o.grad)[outi * D + static_cast<std::size_t>(i)];
+          const float z = (*o.data)[outi * D + static_cast<std::size_t>(i)];
+          dot += dy * z;
+        }
+        dot /= static_cast<float>(D);
+
+        const float inv = inv_rms[outi];
+        for (int i = 0; i < D; ++i) {
+          const float dy = (*o.grad)[outi * D + static_cast<std::size_t>(i)];
+          const float z = (*o.data)[outi * D + static_cast<std::size_t>(i)];
+          (*px.grad)[outi * D + static_cast<std::size_t>(i)] += (dy - z * dot) * inv;
+        }
+      }
+    };
+  }
+
+  return out;
+}
+
+Tensor rmsnorm_affine(const Tensor& x, const Tensor& gamma, float eps) {
+  // RMSNorm with affine gamma: y_i = (x_i / rms) * gamma_i
+  if (x.shape.empty()) throw std::runtime_error("rmsnorm_affine: empty shape");
+  const int D = x.shape.back();
+  if (gamma.shape != std::vector<int>({D})) throw std::runtime_error("rmsnorm_affine: gamma must be [D]");
+  const std::size_t outer = x.numel() / static_cast<std::size_t>(D);
+
+  Tensor out = Tensor::zeros(x.shape, want_grad(x) || want_grad(gamma));
+  std::vector<float> inv_rms(outer, 0.0f);
+  std::vector<float> z_data(outer * D, 0.0f); // normalized (pre-affine)
+
+  for (std::size_t o = 0; o < outer; ++o) {
+    float sum_sq = 0.0f;
+    for (int i = 0; i < D; ++i) {
+      const float v = (*x.data)[o * D + static_cast<std::size_t>(i)];
+      sum_sq += v * v;
+    }
+    const float rms = std::sqrt(sum_sq / static_cast<float>(D) + eps);
+    const float inv = 1.0f / rms;
+    inv_rms[o] = inv;
+
+    for (int i = 0; i < D; ++i) {
+      const float z = (*x.data)[o * D + static_cast<std::size_t>(i)] * inv;
+      z_data[o * D + static_cast<std::size_t>(i)] = z;
+      (*out.data)[o * D + static_cast<std::size_t>(i)] = z * (*gamma.data)[static_cast<std::size_t>(i)];
+    }
+  }
+
+  if (out.requires_grad) {
+    out.node = std::make_shared<Node>();
+    out.node->parents = {x, gamma};
+    out.node->backward = [D, inv_rms = std::move(inv_rms), z_data = std::move(z_data)](Tensor& o) mutable {
+      const Tensor& px = o.node->parents[0];
+      const Tensor& pg = o.node->parents[1];
+      const std::size_t outer2 = o.numel() / static_cast<std::size_t>(D);
+
+      for (std::size_t outi = 0; outi < outer2; ++outi) {
+        // gamma gradient: dL/dgamma_i = dL/dy_i * z_i
+        if (pg.requires_grad) {
+          for (int i = 0; i < D; ++i) {
+            const std::size_t idx = outi * D + static_cast<std::size_t>(i);
+            (*pg.grad)[static_cast<std::size_t>(i)] += (*o.grad)[idx] * z_data[idx];
+          }
+        }
+
+        // x gradient: dL/dz_i = dL/dy_i * gamma_i
+        // dL/dx_i = (dL/dz_i - z_i * mean(dL/dz * z)) / rms
+        if (px.requires_grad) {
+          float dot = 0.0f;
+          for (int i = 0; i < D; ++i) {
+            const float dz = (*o.grad)[outi * D + static_cast<std::size_t>(i)] * (*pg.data)[static_cast<std::size_t>(i)];
+            const float z = z_data[outi * D + static_cast<std::size_t>(i)];
+            dot += dz * z;
+          }
+          dot /= static_cast<float>(D);
+
+          const float inv = inv_rms[outi];
+          for (int i = 0; i < D; ++i) {
+            const float dz = (*o.grad)[outi * D + static_cast<std::size_t>(i)] * (*pg.data)[static_cast<std::size_t>(i)];
+            const float z = z_data[outi * D + static_cast<std::size_t>(i)];
+            (*px.grad)[outi * D + static_cast<std::size_t>(i)] += (dz - z * dot) * inv;
+          }
         }
       }
     };

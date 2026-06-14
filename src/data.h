@@ -27,4 +27,16 @@ class ByteDataset {
   std::vector<std::uint8_t> bytes_;
 };
 
+class TokenDataset {
+ public:
+  explicit TokenDataset(std::vector<std::int32_t> token_ids);
+
+  std::size_t size() const;
+
+  Batch sample_batch(int B, int T, util::Rng& rng) const;
+
+ private:
+  std::vector<std::int32_t> tokens_;
+};
+
 } // namespace data

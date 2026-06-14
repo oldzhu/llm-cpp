@@ -1,0 +1,8 @@
+fastapi>=0.110
+uvicorn[standard]
+websockets>=12.0
+python-dotenv
+openai
+httpx
+jinja2
+aiofiles

@@ -1,0 +1,77 @@
+{
+  "architecture": "llama",
+  "detect_by": { "architectures": ["LlamaForCausalLM", "LlamaModel"] },
+  "config_map": {
+    "vocab_size": "vocab_size",
+    "max_position_embeddings": "seq_len",
+    "hidden_size": "d_model",
+    "num_hidden_layers": "n_layers",
+    "intermediate_size": "swiglu_interm"
+  },
+  "config_from_key": {
+    "norm_type": {"hidden_act": "silu", "set": 1, "else": 0},
+    "mlp_type": {"rms_norm_eps": true, "set": 1, "else": 0}
+  },
+  "fixed_config": { "mlp_type": 1 },
+  "tokenizer": {
+    "type": "sentencepiece",
+    "model_file": "tokenizer.model",
+    "note": "SentencePiece not yet supported natively; use --token-data with pre-tokenized data"
+  },
+
+  "params": [
+    { "id": 0,  "name": "wte",              "hf": "model.embed_tokens.weight",      "op": "identity" },
+    { "id": 1,  "name": "wpe",              "hf": null,                              "op": "zeros", "shape": ["T", "C"] }
+  ],
+
+  "layer_params": [
+    { "off": 0,  "name": "w_qkv",           "op": "llama_qkv", "hf_q": "model.layers.{L}.self_attn.q_proj.weight", "hf_k": "model.layers.{L}.self_attn.k_proj.weight", "hf_v": "model.layers.{L}.self_attn.v_proj.weight" },
+    { "off": 1,  "name": "b_qkv",           "hf": null,                              "op": "zeros", "shape_var": "3C" },
+    { "off": 2,  "name": "w_proj",          "hf": "model.layers.{L}.self_attn.o_proj.weight", "op": "transpose" },
+    { "off": 3,  "name": "b_proj",          "hf": null,                              "op": "zeros", "shape_var": "C" },
+    { "off": 4,  "name": "w_fc",            "hf": "model.layers.{L}.mlp.gate_proj.weight", "op": "transpose" },
+    { "off": 5,  "name": "b_fc",            "hf": null,                              "op": "zeros", "shape": ["interm"] },
+    { "off": 6,  "name": "w_out",           "hf": "model.layers.{L}.mlp.up_proj.weight",   "op": "transpose" },
+    { "off": 7,  "name": "b_out",           "hf": null,                              "op": "zeros", "shape": ["interm"] },
+    { "off": 8,  "name": "ln_attn_gamma",   "hf": "model.layers.{L}.input_layernorm.weight", "op": "identity" },
+    { "off": 9,  "name": "ln_attn_beta",    "hf": null,                              "op": "zeros", "shape_var": "C" },
+    { "off": 10, "name": "ln_mlp_gamma",    "hf": "model.layers.{L}.post_attention_layernorm.weight", "op": "identity" },
+    { "off": 11, "name": "ln_mlp_beta",     "hf": null,                              "op": "zeros", "shape_var": "C" }
+  ],
+
+  "post_params": [
+    { "off": 0,  "name": "w_lm",             "hf": "lm_head.weight",                 "op": "transpose_or_wte", "tied": "wte" },
+    { "off": 1,  "name": "b_lm",             "hf": null,                              "op": "zeros", "shape_var": "V" },
+    { "off": 2,  "name": "ln_final_gamma",   "hf": "model.norm.weight",              "op": "identity" },
+    { "off": 3,  "name": "ln_final_beta",    "hf": null,                              "op": "zeros", "shape_var": "C" }
+  ],
+
+  "swiglu_per_layer": {
+    "note": "LLaMA uses SwiGLU FFN. Map gate/up/down to our swiglu params.",
+    "params": [
+      { "off": 0, "name": "swiglu_gate",   "hf": "model.layers.{L}.mlp.gate_proj.weight", "op": "transpose" },
+      { "off": 1, "name": "swiglu_gate_b", "hf": null, "op": "zeros", "shape": ["interm"] },
+      { "off": 2, "name": "swiglu_up",     "hf": "model.layers.{L}.mlp.up_proj.weight",   "op": "transpose" },
+      { "off": 3, "name": "swiglu_up_b",   "hf": null, "op": "zeros", "shape": ["interm"] },
+      { "off": 4, "name": "swiglu_down",   "hf": "model.layers.{L}.mlp.down_proj.weight", "op": "transpose" },
+      { "off": 5, "name": "swiglu_down_b", "hf": null, "op": "zeros", "shape_var": "C" }
+    ]
+  },
+
+  "extra_tensors_per_layer": [
+    { "name": "moe_router_w",  "op": "zeros", "shape": ["C", "4"] },
+    { "name": "moe_router_b",  "op": "zeros", "shape": ["4"] }
+  ],
+
+  "extra_expert_tensors": [
+    { "name": "moe_expert_wfc",  "op": "zeros", "shape": ["C", "4*C"] },
+    { "name": "moe_expert_bfc",  "op": "zeros", "shape": ["4*C"] },
+    { "name": "moe_expert_wout", "op": "zeros", "shape": ["4*C", "C"] },
+    { "name": "moe_expert_bout", "op": "zeros", "shape": ["C"] }
+  ],
+
+  "gqa_config": {
+    "hf_keys": ["num_attention_heads", "num_key_value_heads"],
+    "note": "When n_kv_heads < n_heads, QKV concat pads K/V to full C width with zeros"
+  }
+}

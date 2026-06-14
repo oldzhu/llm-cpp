@@ -19,7 +19,21 @@ Tensor matmul2d(const Tensor& a, const Tensor& b); // (m,k) @ (k,n) -> (m,n)
 Tensor bmm(const Tensor& a, const Tensor& b);      // (B,M,K) @ (B,K,N) -> (B,M,N)
 
 Tensor gelu(const Tensor& x);
+
+// SiLU (Sigmoid Linear Unit, a.k.a. Swish): silu(x) = x * sigmoid(x)
+Tensor silu(const Tensor& x);
 Tensor layernorm_lastdim(const Tensor& x, float eps);
+
+// Affine LayerNorm: y = ((x - mean) / sqrt(var + eps)) * gamma + beta
+// gamma: [D], beta: [D], where D = x.shape.back()
+Tensor layernorm_affine(const Tensor& x, const Tensor& gamma, const Tensor& beta, float eps);
+
+// RMSNorm (non-affine): y_i = x_i / sqrt(mean(x^2) + eps)
+Tensor rmsnorm_lastdim(const Tensor& x, float eps);
+
+// RMSNorm with affine gamma: y_i = (x_i / sqrt(mean(x^2) + eps)) * gamma_i
+// gamma: [D], where D = x.shape.back()
+Tensor rmsnorm_affine(const Tensor& x, const Tensor& gamma, float eps);
 Tensor softmax_lastdim(const Tensor& x);
 
 Tensor reshape(const Tensor& x, const std::vector<int>& new_shape);

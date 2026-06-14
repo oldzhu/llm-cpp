@@ -7,6 +7,8 @@
 
 #include "data.h"
 #include "backend/cpu_backend.h"
+#include "backend/blocked_simd_backend.h"
+#include "backend/vulkan/vulkan_backend.h"
 #include "backend/registry.h"
 #include "model.h"
 #include "ops.h"
@@ -14,6 +16,10 @@
 #include "tensor.h"
 #include "util.h"
 #include "variants/mha/mha_attention.h"
+#include "variants/kvcache/kvcache_attention.h"
+#include "variants/rope/rope_attention.h"
+#include "variants/gqa/gqa_attention.h"
+#include "variants/moe/moe_mlp.h"
 #include "tokenizer/byte_tokenizer.h"
 #include "tokenizer/bpe_tokenizer.h"
 
@@ -435,18 +441,562 @@ void test_bpe_tokenizer_encode_decode() {
   expect_true(tok.vocab_size() == 10, "BpeTokenizer vocab_size == 10");
 }
 
+void test_gradcheck_layernorm_affine_via_cross_entropy() {
+  std::cout << "[RUN ] gradcheck layernorm_affine (via cross_entropy)\n";
+  const int N = 4;
+  const int V = 6;
+  const float eps = 1e-3f;
+  util::Rng rng(789);
+  std::vector<float> x_data(static_cast<std::size_t>(N) * V);
+  for (float& v : x_data) v = (rng.next_f01() - 0.5f) * 0.5f;
+  std::vector<float> gamma_data(static_cast<std::size_t>(V));
+  std::vector<float> beta_data(static_cast<std::size_t>(V));
+  for (int i = 0; i < V; ++i) {
+    gamma_data[i] = 1.0f + (rng.next_f01() - 0.5f) * 0.1f;
+    beta_data[i]  = (rng.next_f01() - 0.5f) * 0.05f;
+  }
+  std::vector<std::int32_t> targets(static_cast<std::size_t>(N));
+  for (int i = 0; i < N; ++i) targets[static_cast<std::size_t>(i)] = (i + 1) % V;
+
+  nn::Tensor x = nn::Tensor::zeros({N, V}, true);
+  nn::Tensor gamma = nn::Tensor::zeros({V}, true);
+  nn::Tensor beta  = nn::Tensor::zeros({V}, true);
+  *x.data = x_data;
+  *gamma.data = gamma_data;
+  *beta.data  = beta_data;
+
+  nn::Tensor y = nn::layernorm_affine(x, gamma, beta, 1e-5f);
+  nn::Tensor loss = nn::cross_entropy(y, targets);
+  loss.backward();
+
+  auto fd_loss = [&](const std::vector<float>& xd, const std::vector<float>& gd, const std::vector<float>& bd) -> float {
+    nn::GradMode no_grad(false);
+    nn::Tensor xi = nn::Tensor::zeros({N, V}, false);
+    nn::Tensor gi = nn::Tensor::zeros({V}, false);
+    nn::Tensor bi = nn::Tensor::zeros({V}, false);
+    *xi.data = xd;
+    *gi.data = gd;
+    *bi.data = bd;
+    nn::Tensor yi = nn::layernorm_affine(xi, gi, bi, 1e-5f);
+    return (*nn::cross_entropy(yi, targets).data)[0];
+  };
+
+  // dL/dx
+  for (std::size_t i = 0; i < x_data.size(); ++i) {
+    auto xp = x_data, xm = x_data;
+    xp[i] += eps; xm[i] -= eps;
+    const float gn = (fd_loss(xp, gamma_data, beta_data) - fd_loss(xm, gamma_data, beta_data)) / (2.0f * eps);
+    expect_near((*x.grad)[i], gn, 5e-2f, "layernorm_affine gradcheck: dL/dx[" + std::to_string(i) + "]");
+  }
+
+  // dL/dgamma
+  for (std::size_t i = 0; i < gamma_data.size(); ++i) {
+    auto gp = gamma_data, gm = gamma_data;
+    gp[i] += eps; gm[i] -= eps;
+    const float gn = (fd_loss(x_data, gp, beta_data) - fd_loss(x_data, gm, beta_data)) / (2.0f * eps);
+    expect_near((*gamma.grad)[i], gn, 5e-2f, "layernorm_affine gradcheck: dL/dgamma[" + std::to_string(i) + "]");
+  }
+
+  // dL/dbeta
+  for (std::size_t i = 0; i < beta_data.size(); ++i) {
+    auto bp = beta_data, bm = beta_data;
+    bp[i] += eps; bm[i] -= eps;
+    const float gn = (fd_loss(x_data, gamma_data, bp) - fd_loss(x_data, gamma_data, bm)) / (2.0f * eps);
+    expect_near((*beta.grad)[i], gn, 5e-2f, "layernorm_affine gradcheck: dL/dbeta[" + std::to_string(i) + "]");
+  }
+}
+
+void test_kvcache_matches_full_attention() {
+  std::cout << "[RUN ] kvcache matches full attention\n";
+  const int B = 1;
+  const int T = 3;
+  const int C = 4;
+  const int T_max = 8;
+  util::Rng rng(777);
+  auto fill = [&](nn::Tensor& t, float scale) {
+    for (float& v : *t.data) v = (rng.next_f01() - 0.5f) * scale;
+  };
+  nn::Tensor x_all = nn::Tensor::zeros({B, T + 1, C}, false);
+  nn::Tensor w_qkv = nn::Tensor::zeros({C, 3 * C}, false);
+  nn::Tensor b_qkv = nn::Tensor::zeros({3 * C}, false);
+  nn::Tensor w_proj = nn::Tensor::zeros({C, C}, false);
+  nn::Tensor b_proj = nn::Tensor::zeros({C}, false);
+  fill(x_all, 0.2f);
+  fill(w_qkv, 0.2f);
+  fill(b_qkv, 0.02f);
+  fill(w_proj, 0.2f);
+  fill(b_proj, 0.02f);
+  std::vector<float> x_prefill_data(static_cast<std::size_t>(B) * T * C);
+  std::vector<float> x_step_data(static_cast<std::size_t>(B) * 1 * C);
+  for (std::size_t i = 0; i < x_prefill_data.size(); ++i) x_prefill_data[i] = (*x_all.data)[i];
+  const std::size_t step_src = static_cast<std::size_t>(B) * T * C;
+  for (std::size_t i = 0; i < x_step_data.size(); ++i) x_step_data[i] = (*x_all.data)[step_src + i];
+  nn::Tensor x_prefill = nn::Tensor::zeros({B, T, C}, false);
+  nn::Tensor x_step = nn::Tensor::zeros({B, 1, C}, false);
+  *x_prefill.data = x_prefill_data;
+  *x_step.data = x_step_data;
+  nn::variants::kvcache::KVCache cache(B, T_max, C);
+  nn::Tensor y_prefill = nn::variants::kvcache::self_attention_prefill(
+      x_prefill, w_qkv, b_qkv, w_proj, b_proj, cache);
+  expect_true(cache.cur_len == T, "kvcache: cur_len after prefill");
+  expect_true(y_prefill.shape == std::vector<int>({B, T, C}), "kvcache: prefill output shape");
+  nn::Tensor y_step = nn::variants::kvcache::self_attention_step(
+      x_step, w_qkv, b_qkv, w_proj, b_proj, cache);
+  expect_true(cache.cur_len == T + 1, "kvcache: cur_len after step");
+  expect_true(y_step.shape == std::vector<int>({B, 1, C}), "kvcache: step output shape");
+  nn::Tensor y_full = nn::self_attention_1h(x_all, w_qkv, b_qkv, w_proj, b_proj);
+  const std::size_t step_base = 0;
+  const std::size_t full_base = static_cast<std::size_t>(T) * C;
+  for (int c = 0; c < C; ++c) {
+    expect_near((*y_step.data)[step_base + c], (*y_full.data)[full_base + c], 1e-5f,
+                "kvcache: step matches full at c=" + std::to_string(c));
+  }
+  nn::Tensor qkv_full = nn::linear_lastdim(x_all, w_qkv, b_qkv);
+  for (int t = 0; t < T + 1; ++t) {
+    const std::size_t qkv_off = static_cast<std::size_t>(t) * 3 * C + C;
+    const std::size_t cache_off = static_cast<std::size_t>(t) * C;
+    for (int c = 0; c < C; ++c) {
+      expect_near((*cache.k_cache_.data)[cache_off + c], (*qkv_full.data)[qkv_off + c], 1e-5f,
+                  "kvcache: cached K matches at t=" + std::to_string(t));
+    }
+  }
+}
+
+void test_rope_position_zero_is_identity() {
+  std::cout << "[RUN ] RoPE position-zero is identity\n";
+  const int B = 1;
+  const int T = 1;
+  const int C = 4;
+
+  nn::Tensor q = nn::Tensor::zeros({B, T, C}, false);
+  nn::Tensor k = nn::Tensor::zeros({B, T, C}, false);
+  for (int c = 0; c < C; ++c) {
+    (*q.data)[c] = static_cast<float>(c + 1);
+    (*k.data)[c] = static_cast<float>(c + 10);
+  }
+
+  std::vector<float> q_copy = *q.data;
+  std::vector<float> k_copy = *k.data;
+
+  nn::variants::rope::rope_rotate(q, k, B, T, C);
+
+  for (int c = 0; c < C; ++c) {
+    expect_near((*q.data)[c], q_copy[static_cast<std::size_t>(c)], 1e-5f,
+                "RoPE pos0: q unchanged at c=" + std::to_string(c));
+    expect_near((*k.data)[c], k_copy[static_cast<std::size_t>(c)], 1e-5f,
+                "RoPE pos0: k unchanged at c=" + std::to_string(c));
+  }
+}
+
+void test_rope_attention_runs() {
+  std::cout << "[RUN ] RoPE attention forward\n";
+  const int B = 2;
+  const int T = 4;
+  const int C = 4;
+
+  util::Rng rng(555);
+  auto fill = [&](nn::Tensor& t, float scale) {
+    for (float& v : *t.data) v = (rng.next_f01() - 0.5f) * scale;
+  };
+
+  nn::Tensor x = nn::Tensor::zeros({B, T, C}, false);
+  nn::Tensor w_qkv = nn::Tensor::zeros({C, 3 * C}, false);
+  nn::Tensor b_qkv = nn::Tensor::zeros({3 * C}, false);
+  nn::Tensor w_proj = nn::Tensor::zeros({C, C}, false);
+  nn::Tensor b_proj = nn::Tensor::zeros({C}, false);
+
+  fill(x, 0.2f);
+  fill(w_qkv, 0.2f);
+  fill(b_qkv, 0.02f);
+  fill(w_proj, 0.2f);
+  fill(b_proj, 0.02f);
+
+  nn::Tensor y = nn::variants::rope::self_attention_rope(x, w_qkv, b_qkv, w_proj, b_proj);
+  expect_true(y.shape == std::vector<int>({B, T, C}), "RoPE attn: output shape [B,T,C]");
+
+  // Verify output is not all-zero and not NaN
+  bool all_finite = true;
+  for (float v : *y.data) {
+    if (!std::isfinite(v)) all_finite = false;
+  }
+  expect_true(all_finite, "RoPE attn: output is finite");
+}
+
+void test_byte_tokenizer_embedding_shape() {
+  std::cout << "[RUN ] ByteTokenizer embedding shape check\n";
+  ByteTokenizer tok;
+  expect_true(tok.vocab_size() == 256, "ByteTokenizer vocab_size == 256");
+  model::Config cfg;
+  cfg.vocab_size = tok.vocab_size();
+  cfg.seq_len = 8;
+  cfg.d_model = 16;
+  cfg.n_layers = 1;
+  model::TinyGPT gpt(cfg, 42);
+  expect_true(gpt.parameters_const().tensors[0]->shape == std::vector<int>({256, 16}),
+              "ByteTokenizer: wte shape matches V=256, C=16");
+}
+
+void test_gradcheck_rmsnorm_affine_via_cross_entropy() {
+  std::cout << "[RUN ] gradcheck rmsnorm_affine (via cross_entropy)\n";
+  const int N = 4;
+  const int V = 6;
+  const float eps = 1e-3f;
+  util::Rng rng(890);
+  std::vector<float> x_data(static_cast<std::size_t>(N) * V);
+  for (float& v : x_data) v = (rng.next_f01() - 0.5f) * 0.5f;
+  std::vector<float> gamma_data(static_cast<std::size_t>(V));
+  for (int i = 0; i < V; ++i) gamma_data[i] = 1.0f + (rng.next_f01() - 0.5f) * 0.1f;
+  std::vector<std::int32_t> targets(static_cast<std::size_t>(N));
+  for (int i = 0; i < N; ++i) targets[static_cast<std::size_t>(i)] = (i + 1) % V;
+
+  nn::Tensor x = nn::Tensor::zeros({N, V}, true);
+  nn::Tensor gamma = nn::Tensor::zeros({V}, true);
+  *x.data = x_data;
+  *gamma.data = gamma_data;
+
+  nn::Tensor y = nn::rmsnorm_affine(x, gamma, 1e-5f);
+  nn::Tensor loss = nn::cross_entropy(y, targets);
+  loss.backward();
+
+  auto fd_loss = [&](const std::vector<float>& xd, const std::vector<float>& gd) -> float {
+    nn::GradMode no_grad(false);
+    nn::Tensor xi = nn::Tensor::zeros({N, V}, false);
+    nn::Tensor gi = nn::Tensor::zeros({V}, false);
+    *xi.data = xd;
+    *gi.data = gd;
+    nn::Tensor yi = nn::rmsnorm_affine(xi, gi, 1e-5f);
+    return (*nn::cross_entropy(yi, targets).data)[0];
+  };
+
+  for (std::size_t i = 0; i < x_data.size(); ++i) {
+    auto xp = x_data, xm = x_data;
+    xp[i] += eps; xm[i] -= eps;
+    const float gn = (fd_loss(xp, gamma_data) - fd_loss(xm, gamma_data)) / (2.0f * eps);
+    expect_near((*x.grad)[i], gn, 5e-2f, "rmsnorm_affine gradcheck: dL/dx[" + std::to_string(i) + "]");
+  }
+  for (std::size_t i = 0; i < gamma_data.size(); ++i) {
+    auto gp = gamma_data, gm = gamma_data;
+    gp[i] += eps; gm[i] -= eps;
+    const float gn = (fd_loss(x_data, gp) - fd_loss(x_data, gm)) / (2.0f * eps);
+    expect_near((*gamma.grad)[i], gn, 5e-2f, "rmsnorm_affine gradcheck: dL/dgamma[" + std::to_string(i) + "]");
+  }
+}
+
+void test_gradcheck_silu_via_cross_entropy() {
+  std::cout << "[RUN ] gradcheck silu (via cross_entropy)\n";
+  const int N = 3;
+  const int V = 4;
+  const float eps = 1e-3f;
+  util::Rng rng(901);
+  std::vector<float> x_data(static_cast<std::size_t>(N) * V);
+  for (float& v : x_data) v = (rng.next_f01() - 0.5f) * 0.5f;
+  std::vector<std::int32_t> targets(static_cast<std::size_t>(N));
+  for (int i = 0; i < N; ++i) targets[static_cast<std::size_t>(i)] = i % V;
+
+  nn::Tensor x = nn::Tensor::zeros({N, V}, true);
+  *x.data = x_data;
+  nn::Tensor y = nn::silu(x);
+  nn::Tensor loss = nn::cross_entropy(y, targets);
+  loss.backward();
+
+  auto fd = [&](const std::vector<float>& d) {
+    nn::GradMode no_grad(false);
+    nn::Tensor xi = nn::Tensor::zeros({N, V}, false);
+    *xi.data = d;
+    return (*nn::cross_entropy(nn::silu(xi), targets).data)[0];
+  };
+
+  for (std::size_t i = 0; i < x_data.size(); ++i) {
+    auto xp = x_data, xm = x_data;
+    xp[i] += eps; xm[i] -= eps;
+    const float gn = (fd(xp) - fd(xm)) / (2.0f * eps);
+    expect_near((*x.grad)[i], gn, 5e-2f, "silu gradcheck: dL/dx[" + std::to_string(i) + "]");
+  }
+}
+
+void test_gqa_matches_mha_when_same_heads() {
+  std::cout << "[RUN ] GQA matches MHA when n_kv_heads == n_heads\n";
+  const int B = 2;
+  const int T = 4;
+  const int C = 8;
+  const int n_heads = 2;
+  const int D = C / n_heads;
+
+  util::Rng rng(111);
+  auto fill = [&](nn::Tensor& t, float scale) {
+    for (float& v : *t.data) v = (rng.next_f01() - 0.5f) * scale;
+  };
+
+  nn::Tensor x = nn::Tensor::zeros({B, T, C}, false);
+  nn::Tensor w_qkv = nn::Tensor::zeros({C, 3 * C}, false);
+  nn::Tensor b_qkv = nn::Tensor::zeros({3 * C}, false);
+  nn::Tensor w_proj = nn::Tensor::zeros({C, C}, false);
+  nn::Tensor b_proj = nn::Tensor::zeros({C}, false);
+
+  fill(x, 0.2f);
+  fill(w_qkv, 0.2f);
+  fill(b_qkv, 0.02f);
+  fill(w_proj, 0.2f);
+  fill(b_proj, 0.02f);
+
+  nn::Tensor y_mha = nn::variants::mha::self_attention_mha(x, w_qkv, b_qkv, w_proj, b_proj, n_heads);
+
+  // Manually project and split for GQA
+  nn::Tensor qkv = nn::linear_lastdim(x, w_qkv, b_qkv);
+  nn::Tensor q = nn::reshape(nn::Tensor::zeros({B * T, C}, false), {B, T, C});
+  nn::Tensor k = nn::Tensor::zeros({B, T, C}, false);
+  nn::Tensor v = nn::Tensor::zeros({B, T, C}, false);
+  for (int bb = 0; bb < B; ++bb) {
+    for (int t = 0; t < T; ++t) {
+      for (int c = 0; c < C; ++c) {
+        const std::size_t base = (static_cast<std::size_t>(bb) * T + t) * 3 * C + c;
+        (*q.data)[(static_cast<std::size_t>(bb) * T + t) * C + c] = (*qkv.data)[base];
+        (*k.data)[(static_cast<std::size_t>(bb) * T + t) * C + c] = (*qkv.data)[base + C];
+        (*v.data)[(static_cast<std::size_t>(bb) * T + t) * C + c] = (*qkv.data)[base + 2 * C];
+      }
+    }
+  }
+
+  nn::Tensor q4 = nn::reshape(q, {B, T, n_heads, D});
+  nn::Tensor k4 = nn::reshape(k, {B, T, n_heads, D});
+  nn::Tensor v4 = nn::reshape(v, {B, T, n_heads, D});
+
+  nn::Tensor att_gqa = nn::variants::gqa::self_attention_gqa(q4, k4, v4, n_heads, n_heads);
+  nn::Tensor y_gqa = nn::linear_lastdim(att_gqa, w_proj, b_proj);
+
+  for (std::size_t i = 0; i < y_mha.data->size(); ++i) {
+    expect_near((*y_mha.data)[i], (*y_gqa.data)[i], 1e-4f,
+                "GQA vs MHA: output[" + std::to_string(i) + "]");
+  }
+}
+
+void test_blocked_simd_matches_cpu_matmul() {
+  std::cout << "[RUN ] blocked SIMD matmul matches CPU reference\n";
+
+  backend::CpuBackend cpu_ref;
+  backend::BlockedSimdCpuBackend simd;
+
+  auto test_size = [&](int m, int k, int n, const char* label) {
+    std::vector<float> a(static_cast<std::size_t>(m) * k);
+    std::vector<float> b(static_cast<std::size_t>(k) * n);
+    std::vector<float> c_ref(static_cast<std::size_t>(m) * n);
+    std::vector<float> c_simd(static_cast<std::size_t>(m) * n);
+
+    util::Rng rng(static_cast<std::uint64_t>(m * 100 + k * 10 + n));
+    for (float& v : a) v = (rng.next_f01() - 0.5f) * 0.2f;
+    for (float& v : b) v = (rng.next_f01() - 0.5f) * 0.2f;
+
+    cpu_ref.matmul2d_fwd(m, k, n, a.data(), b.data(), c_ref.data());
+    simd.matmul2d_fwd(m, k, n, a.data(), b.data(), c_simd.data());
+
+    for (std::size_t i = 0; i < c_ref.size(); ++i) {
+      expect_near(c_ref[i], c_simd[i], 1e-4f,
+                  std::string("simd fwd ") + label + "[" + std::to_string(i) + "]");
+    }
+
+    // Also test backward: dA and dB accumulation
+    std::vector<float> dC(static_cast<std::size_t>(m) * n);
+    std::vector<float> dA_ref(static_cast<std::size_t>(m) * k, 0.0f);
+    std::vector<float> dB_ref(static_cast<std::size_t>(k) * n, 0.0f);
+    std::vector<float> dA_simd(static_cast<std::size_t>(m) * k, 0.0f);
+    std::vector<float> dB_simd(static_cast<std::size_t>(k) * n, 0.0f);
+
+    for (float& v : dC) v = (rng.next_f01() - 0.5f) * 0.1f;
+
+    cpu_ref.matmul2d_bwd(m, k, n, a.data(), b.data(), dC.data(), dA_ref.data(), dB_ref.data());
+    simd.matmul2d_bwd(m, k, n, a.data(), b.data(), dC.data(), dA_simd.data(), dB_simd.data());
+
+    for (std::size_t i = 0; i < dA_ref.size(); ++i) {
+      expect_near(dA_ref[i], dA_simd[i], 1e-4f,
+                  std::string("simd bwd dA ") + label + "[" + std::to_string(i) + "]");
+    }
+    for (std::size_t i = 0; i < dB_ref.size(); ++i) {
+      expect_near(dB_ref[i], dB_simd[i], 1e-4f,
+                  std::string("simd bwd dB ") + label + "[" + std::to_string(i) + "]");
+    }
+  };
+
+  // Test multiple sizes including non-multiples of block size
+  test_size(16, 16, 16, "16x16x16");
+  test_size(32, 64, 48, "32x64x48");
+  test_size(100, 128, 80, "100x128x80"); // non-multiple of 64
+  test_size(64, 64, 256, "64x64x256");
+  test_size(1, 64, 64, "1x64x64");       // single row
+  test_size(64, 1, 64, "64x1x64");       // K=1
+}
+
+void test_simd_backend_via_model_training() {
+  std::cout << "[RUN ] SIMD backend: model training regression\n";
+
+  // Run a tiny training loop with SIMD backend
+  auto simd = std::make_unique<backend::BlockedSimdCpuBackend>();
+  backend::set(std::move(simd));
+
+  std::vector<std::uint8_t> bytes(2048);
+  for (std::size_t i = 0; i < bytes.size(); ++i) bytes[i] = static_cast<std::uint8_t>(i & 0xFF);
+  data::ByteDataset ds(std::move(bytes));
+
+  model::Config cfg;
+  cfg.vocab_size = 256;
+  cfg.seq_len = 32;
+  cfg.d_model = 32;
+  cfg.n_layers = 1;
+
+  const std::uint64_t seed = 42;
+  model::TinyGPT gpt(cfg, seed);
+
+  optim::AdamWConfig ocfg;
+  ocfg.lr = 1e-3f;
+  ocfg.weight_decay = 0.01f;
+  optim::AdamW opt(ocfg);
+
+  util::Rng rng(seed ^ 0xDEADBEEF);
+
+  float l0 = 0.0f;
+  float lN = 0.0f;
+  for (int step = 0; step < 20; ++step) {
+    data::Batch batch = ds.sample_batch(2, 32, rng);
+    gpt.zero_grad();
+    nn::Tensor loss = gpt.loss(batch.x, batch.y, batch.B, batch.T);
+    loss.backward();
+    opt.step(gpt.parameters().tensors);
+    if (step == 0) l0 = (*loss.data)[0];
+    if (step == 19) lN = (*loss.data)[0];
+  }
+
+  expect_true(lN < l0, "SIMD backend: training loss decreases (l0=" + std::to_string(l0) + ", lN=" + std::to_string(lN) + ")");
+
+  // Restore default CPU backend
+  backend::set(std::make_unique<backend::CpuBackend>());
+}
+
+void test_moe_forward_produces_output() {
+  std::cout << "[RUN ] MoE forward produces valid output\n";
+  try {
+  const int N = 4, C = 8, n_experts = 4, top_k = 2, interm = 4 * C;
+  util::Rng rng(333);
+  nn::Tensor x = nn::Tensor::zeros({N, C}, false);
+  nn::Tensor wr = nn::Tensor::zeros({C, n_experts}, false);
+  nn::Tensor br = nn::Tensor::zeros({n_experts}, false);
+  for (float& v : *x.data) v = (rng.next_f01() - 0.5f) * 0.2f;
+  for (float& v : *wr.data) v = (rng.next_f01() - 0.5f) * 0.2f;
+  std::vector<nn::Tensor> wfc, bfc, wout, bout;
+  wfc.reserve(static_cast<std::size_t>(n_experts));
+  bfc.reserve(static_cast<std::size_t>(n_experts));
+  wout.reserve(static_cast<std::size_t>(n_experts));
+  bout.reserve(static_cast<std::size_t>(n_experts));
+  std::vector<const nn::Tensor*> ptrs;
+  for (int e = 0; e < n_experts; ++e) {
+    wfc.emplace_back(nn::Tensor::randn({C, interm}, 0.1f, 1 + static_cast<std::uint64_t>(rng.next_f01() * 100), false));
+    bfc.emplace_back(nn::Tensor::zeros({interm}, false));
+    wout.emplace_back(nn::Tensor::randn({interm, C}, 0.1f, 2 + static_cast<std::uint64_t>(rng.next_f01() * 100), false));
+    bout.emplace_back(nn::Tensor::zeros({C}, false));
+    ptrs.push_back(&wfc.back()); ptrs.push_back(&bfc.back());
+    ptrs.push_back(&wout.back()); ptrs.push_back(&bout.back());
+  }
+  auto out = nn::variants::moe::moe_mlp_forward(x, wr, br, ptrs, n_experts, top_k, interm);
+  expect_true(out.y.shape == std::vector<int>({N, C}), "MoE: output shape");
+  bool ok = true;
+  for (float v : *out.y.data) if (!std::isfinite(v)) ok = false;
+  expect_true(ok, "MoE: output finite");
+  expect_true((*out.balance_loss.data)[0] >= 0.0f, "MoE: balance loss >= 0");
+  } catch (const std::exception& e) {
+    std::cerr << "[FAIL] MoE: " << e.what() << "\n";
+    ++g_failures;
+  }
+}
+
+void test_moe_training_loss_decreases() {
+  std::cout << "[RUN ] MoE training (loss decreases)\n";
+  std::vector<std::uint8_t> bytes(2048);
+  for (std::size_t i = 0; i < bytes.size(); ++i) bytes[i] = static_cast<std::uint8_t>(i & 0xFF);
+  data::ByteDataset ds(std::move(bytes));
+  model::Config cfg;
+  cfg.vocab_size = 256; cfg.seq_len = 16; cfg.d_model = 16; cfg.n_layers = 1;
+  cfg.mlp_type = 2; cfg.n_experts = 2; cfg.top_k = 1;
+  model::TinyGPT gpt(cfg, 99);
+  optim::AdamWConfig ocfg; ocfg.lr = 1e-3f; ocfg.weight_decay = 0.01f;
+  optim::AdamW opt(ocfg);
+  util::Rng rng(99 ^ 0xDEADBEEF);
+  float l0 = 0.0f, lN = 0.0f;
+  for (int step = 0; step < 30; ++step) {
+    data::Batch batch = ds.sample_batch(2, 16, rng);
+    gpt.zero_grad();
+    nn::Tensor loss = gpt.loss(batch.x, batch.y, batch.B, batch.T);
+    loss.backward();
+    opt.step(gpt.parameters().tensors);
+    if (step == 0) l0 = (*loss.data)[0];
+    if (step == 29) lN = (*loss.data)[0];
+  }
+  expect_true(lN < l0, "MoE: training loss decreases");
+}
+
+#ifdef BUILD_VULKAN
+void test_vulkan_matches_cpu_matmul() {
+  std::cout << "[RUN ] Vulkan matmul matches CPU reference\n";
+
+  backend::VulkanBackend vulkan;
+  if (!vulkan.is_ready()) {
+    std::cout << "[SKIP] Vulkan device not available\n";
+    return;
+  }
+
+  backend::CpuBackend cpu_ref;
+
+  auto test_size = [&](int m, int k, int n, const char* label) {
+    std::vector<float> a(static_cast<std::size_t>(m) * k);
+    std::vector<float> b(static_cast<std::size_t>(k) * n);
+    std::vector<float> c_ref(static_cast<std::size_t>(m) * n);
+    std::vector<float> c_vulkan(static_cast<std::size_t>(m) * n);
+
+    util::Rng rng(static_cast<std::uint64_t>(m * 100 + k * 10 + n));
+    for (float& v : a) v = (rng.next_f01() - 0.5f) * 0.2f;
+    for (float& v : b) v = (rng.next_f01() - 0.5f) * 0.2f;
+
+    cpu_ref.matmul2d_fwd(m, k, n, a.data(), b.data(), c_ref.data());
+    vulkan.matmul2d_fwd(m, k, n, a.data(), b.data(), c_vulkan.data());
+
+    for (std::size_t i = 0; i < c_ref.size(); ++i) {
+      expect_near(c_ref[i], c_vulkan[i], 1e-4f,
+                  std::string("vulkan fwd ") + label + "[" + std::to_string(i) + "]");
+    }
+  };
+
+  test_size(16, 16, 16, "16x16x16");
+  test_size(64, 64, 128, "64x64x128");
+  test_size(7, 13, 19, "7x13x19");  // odd sizes
+}
+#else
+void test_vulkan_matches_cpu_matmul() {
+  std::cout << "[SKIP] Vulkan backend not built (BUILD_VULKAN=OFF)\n";
+}
+#endif
+
 } // namespace
 
-int main(int argc, char** argv) {
+int main(int /*argc*/, char** /*argv*/) {
   try {
     test_backend_dispatch_matmul2d();
     test_backend_dispatch_bmm();
     test_gradcheck_matmul2d_via_cross_entropy();
     test_gradcheck_layernorm_lastdim_via_cross_entropy();
+    test_gradcheck_layernorm_affine_via_cross_entropy();
+    test_gradcheck_rmsnorm_affine_via_cross_entropy();
+    test_gradcheck_silu_via_cross_entropy();
+    test_moe_training_loss_decreases();
+    test_moe_forward_produces_output();
     test_tiny_training_regression_loss_decreases();
     test_mha_matches_1h_when_single_head();
     test_byte_tokenizer_encode_decode();
     test_bpe_tokenizer_encode_decode();
+    test_byte_tokenizer_embedding_shape();
+    test_kvcache_matches_full_attention();
+    test_rope_position_zero_is_identity();
+    test_rope_attention_runs();
+    test_gqa_matches_mha_when_same_heads();
+    test_blocked_simd_matches_cpu_matmul();
+    test_simd_backend_via_model_training();
+    test_vulkan_matches_cpu_matmul();
     test_byte_tokenizer_embedding_shape();
 
     if (g_failures == 0) {

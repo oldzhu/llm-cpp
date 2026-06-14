@@ -25,4 +25,8 @@ void load(const std::string& prefix, model::TinyGPT& gpt, optim::AdamW& opt, std
 // Saves config to <prefix>.json and weights (+ optional AdamW state) to <prefix>.bin.
 void save(const std::string& prefix, const model::TinyGPT& gpt, const optim::AdamW& opt, std::uint64_t step, bool save_optim_state);
 
+// Export model weights in the requested format.
+// format: "binary" (default, .bin+.json), "json" (single .json), "safetensors" (.safetensors)
+void export_weights(const std::string& path, const std::string& format, const model::TinyGPT& gpt);
+
 } // namespace ckpt

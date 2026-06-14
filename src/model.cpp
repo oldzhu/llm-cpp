@@ -4,6 +4,10 @@
 #include <stdexcept>
 
 #include "ops.h"
+#include "variants/moe/moe_mlp.h"
+#include "variants/mha/mha_attention.h"
+#include "variants/gqa/gqa_attention.h"
+#include "variants/rope/rope_attention.h"
 
 namespace model {
 
@@ -40,11 +44,49 @@ TinyGPT::TinyGPT(const Config& cfg, std::uint64_t seed) : cfg_(cfg) {
     blk.w_out = Tensor::randn({4 * C, C}, init_std(4 * C), s ^ 4, true);
     blk.b_out = Tensor::zeros({C}, true);
 
+    blk.ln_attn_gamma = Tensor::zeros({C}, true);
+    blk.ln_attn_beta  = Tensor::zeros({C}, true);
+    blk.ln_mlp_gamma  = Tensor::zeros({C}, true);
+    blk.ln_mlp_beta   = Tensor::zeros({C}, true);
+    for (int ci = 0; ci < C; ++ci) {
+      (*blk.ln_attn_gamma.data)[ci] = 1.0f;
+      (*blk.ln_mlp_gamma.data)[ci] = 1.0f;
+    }
+
+    const int interm = (cfg_.swiglu_interm > 0) ? cfg_.swiglu_interm : (3 * C);
+    blk.swiglu_gate   = Tensor::randn({C, interm}, init_std(C), s ^ 5, true);
+    blk.swiglu_gate_b = Tensor::zeros({interm}, true);
+    blk.swiglu_up     = Tensor::randn({C, interm}, init_std(C), s ^ 6, true);
+    blk.swiglu_up_b   = Tensor::zeros({interm}, true);
+    blk.swiglu_down   = Tensor::randn({interm, C}, init_std(interm), s ^ 7, true);
+    blk.swiglu_down_b = Tensor::zeros({C}, true);
+
+    // MoE router + expert params
+    const int n_exp = cfg_.n_experts;
+    blk.moe_router_w = Tensor::randn({C, n_exp}, init_std(C), s ^ 8, true);
+    blk.moe_router_b = Tensor::zeros({n_exp}, true);
+    blk.moe_expert_wfc.resize(static_cast<std::size_t>(n_exp));
+    blk.moe_expert_bfc.resize(static_cast<std::size_t>(n_exp));
+    blk.moe_expert_wout.resize(static_cast<std::size_t>(n_exp));
+    blk.moe_expert_bout.resize(static_cast<std::size_t>(n_exp));
+    for (int e = 0; e < n_exp; ++e) {
+      blk.moe_expert_wfc[static_cast<std::size_t>(e)]  = Tensor::randn({C, 4 * C}, init_std(C), s ^ (9 + e * 4), true);
+      blk.moe_expert_bfc[static_cast<std::size_t>(e)]  = Tensor::zeros({4 * C}, true);
+      blk.moe_expert_wout[static_cast<std::size_t>(e)] = Tensor::randn({4 * C, C}, init_std(4 * C), s ^ (9 + e * 4 + 1), true);
+      blk.moe_expert_bout[static_cast<std::size_t>(e)] = Tensor::zeros({C}, true);
+    }
+
     blocks_[static_cast<std::size_t>(i)] = std::move(blk);
   }
 
   w_lm_ = Tensor::randn({C, V}, init_std(C), seed ^ 0xC0FFEEULL, true);
   b_lm_ = Tensor::zeros({V}, true);
+
+  ln_final_gamma_ = Tensor::zeros({C}, true);
+  ln_final_beta_  = Tensor::zeros({C}, true);
+  for (int ci = 0; ci < C; ++ci) {
+    (*ln_final_gamma_.data)[ci] = 1.0f;
+  }
 }
 
 Tensor TinyGPT::add_positional(const Tensor& x, int B, int T) {
@@ -101,6 +143,8 @@ Tensor TinyGPT::forward_logits(const std::vector<std::int32_t>& tokens_bt, int B
   if (static_cast<int>(tokens_bt.size()) != B * T) throw std::runtime_error("forward_logits: tokens size mismatch");
   if (wte_.shape != std::vector<int>({V, C})) throw std::runtime_error("wte shape mismatch");
 
+  moe_balance_loss_ = 0.0f;
+
   // === Embedding stage ===
   // Token ids -> vectors: X = Wte[tokens] + Wpe[pos]
   Tensor x = nn::embedding(wte_, tokens_bt, B, T); // [B,T,C]
@@ -111,28 +155,76 @@ Tensor TinyGPT::forward_logits(const std::vector<std::int32_t>& tokens_bt, int B
 
     // === Transformer block (pre-norm) ===
     // Attention sublayer:
-    //   H = LN(X)
-    //   A = CausalSelfAttn(H)
-    //   X = X + A
-    Tensor h = nn::layernorm_lastdim(x, 1e-5f);
-    Tensor a = nn::self_attention_1h(h, blk.w_qkv, blk.b_qkv, blk.w_proj, blk.b_proj);
+    Tensor h;
+    if (cfg_.norm_type == 0)
+      h = nn::layernorm_affine(x, blk.ln_attn_gamma, blk.ln_attn_beta, 1e-5f);
+    else
+      h = nn::rmsnorm_affine(x, blk.ln_attn_gamma, 1e-5f);
+    Tensor a;
+    if (cfg_.attn_type == 0) {
+      // 1-head attention (default)
+      a = nn::self_attention_1h(h, blk.w_qkv, blk.b_qkv, blk.w_proj, blk.b_proj);
+    } else if (cfg_.attn_type == 1) {
+      // Multi-head attention
+      if (cfg_.d_model % cfg_.attn_n_heads != 0) throw std::runtime_error("MHA: d_model must be divisible by n_heads");
+      a = nn::variants::mha::self_attention_mha(h, blk.w_qkv, blk.b_qkv, blk.w_proj, blk.b_proj, cfg_.attn_n_heads);
+    } else if (cfg_.attn_type == 2) {
+      // GQA
+      int n_heads = cfg_.attn_n_heads;
+      int n_kv = (cfg_.attn_n_kv > 0 ? cfg_.attn_n_kv : 1);
+      int hd = cfg_.d_model / n_heads;
+      if (cfg_.d_model % n_heads != 0) throw std::runtime_error("GQA: d_model must be divisible by n_heads");
+      if (n_heads % n_kv != 0) throw std::runtime_error("GQA: n_heads must be divisible by n_kv");
+      // Use MHA path which shares same parameter layout, then at attention level we use GQA
+      // For now, delegate to MHA if GQA setup invalid
+      a = nn::variants::mha::self_attention_mha(h, blk.w_qkv, blk.b_qkv, blk.w_proj, blk.b_proj, cfg_.attn_n_heads);
+    }
     x = nn::add(x, a);
 
     // MLP sublayer:
-    //   M  = LN(X)
-    //   FF = GELU(M W_fc + b_fc) W_out + b_out
-    //   X  = X + FF
-    Tensor m = nn::layernorm_lastdim(x, 1e-5f);
-    Tensor ff = nn::linear_lastdim(m, blk.w_fc, blk.b_fc);
-    ff = nn::gelu(ff);
-    ff = nn::linear_lastdim(ff, blk.w_out, blk.b_out);
+    Tensor m;
+    if (cfg_.norm_type == 0)
+      m = nn::layernorm_affine(x, blk.ln_mlp_gamma, blk.ln_mlp_beta, 1e-5f);
+    else
+      m = nn::rmsnorm_affine(x, blk.ln_mlp_gamma, 1e-5f);
+
+    Tensor ff;
+    if (cfg_.mlp_type == 0) {
+      ff = nn::linear_lastdim(m, blk.w_fc, blk.b_fc);
+      ff = nn::gelu(ff);
+      ff = nn::linear_lastdim(ff, blk.w_out, blk.b_out);
+    } else if (cfg_.mlp_type == 1) {
+      Tensor gate = nn::linear_lastdim(m, blk.swiglu_gate, blk.swiglu_gate_b);
+      Tensor up   = nn::linear_lastdim(m, blk.swiglu_up, blk.swiglu_up_b);
+      gate = nn::silu(gate);
+      ff = nn::mul(gate, up);
+      ff = nn::linear_lastdim(ff, blk.swiglu_down, blk.swiglu_down_b);
+    } else {
+      // MoE MLP
+      const int N = B * T;
+      Tensor x2 = nn::reshape(m, {N, C});
+      std::vector<const Tensor*> expert_ptrs;
+      expert_ptrs.reserve(static_cast<std::size_t>(cfg_.n_experts) * 4);
+      for (int e = 0; e < cfg_.n_experts; ++e) {
+        expert_ptrs.push_back(&blk.moe_expert_wfc[static_cast<std::size_t>(e)]);
+        expert_ptrs.push_back(&blk.moe_expert_bfc[static_cast<std::size_t>(e)]);
+        expert_ptrs.push_back(&blk.moe_expert_wout[static_cast<std::size_t>(e)]);
+        expert_ptrs.push_back(&blk.moe_expert_bout[static_cast<std::size_t>(e)]);
+      }
+      auto moe_out = nn::variants::moe::moe_mlp_forward(x2, blk.moe_router_w, blk.moe_router_b,
+                                                          expert_ptrs, cfg_.n_experts, cfg_.top_k, 4 * C);
+      moe_balance_loss_ += (*moe_out.balance_loss.data)[0];
+      ff = nn::reshape(moe_out.y, {B, T, C});
+    }
     x = nn::add(x, ff);
   }
 
   // Final norm + LM head:
-  //   Xn = LN(X)
-  //   logits = Xn W_lm + b_lm
-  Tensor xn = nn::layernorm_lastdim(x, 1e-5f);
+  Tensor xn;
+  if (cfg_.norm_type == 0)
+    xn = nn::layernorm_affine(x, ln_final_gamma_, ln_final_beta_, 1e-5f);
+  else
+    xn = nn::rmsnorm_affine(x, ln_final_gamma_, 1e-5f);
   Tensor logits = nn::linear_lastdim(xn, w_lm_, b_lm_); // [B,T,V]
   return logits;
 }
@@ -143,7 +235,13 @@ Tensor TinyGPT::loss(const std::vector<std::int32_t>& tokens_bt,
                      int T) {
   Tensor logits = forward_logits(tokens_bt, B, T);
   Tensor logits2 = nn::reshape(logits, {B * T, cfg_.vocab_size});
-  return nn::cross_entropy(logits2, targets_bt);
+  Tensor ce_loss = nn::cross_entropy(logits2, targets_bt);
+  if (cfg_.mlp_type == 2 && moe_balance_loss_ > 0.0f) {
+    // Add auxiliary MoE load balancing loss (scaled)
+    nn::Tensor total = nn::add_scalar(ce_loss, moe_balance_loss_ * 0.01f);
+    return total;
+  }
+  return ce_loss;
 }
 
 void TinyGPT::zero_grad() {
@@ -158,9 +256,27 @@ void TinyGPT::zero_grad() {
     blk.b_fc.zero_grad();
     blk.w_out.zero_grad();
     blk.b_out.zero_grad();
+    blk.ln_attn_gamma.zero_grad();
+    blk.ln_attn_beta.zero_grad();
+    blk.ln_mlp_gamma.zero_grad();
+    blk.ln_mlp_beta.zero_grad();
+    blk.swiglu_gate.zero_grad();
+    blk.swiglu_gate_b.zero_grad();
+    blk.swiglu_up.zero_grad();
+    blk.swiglu_up_b.zero_grad();
+    blk.swiglu_down.zero_grad();
+    blk.swiglu_down_b.zero_grad();
+    blk.moe_router_w.zero_grad();
+    blk.moe_router_b.zero_grad();
+    for (auto& t : blk.moe_expert_wfc)  t.zero_grad();
+    for (auto& t : blk.moe_expert_bfc)  t.zero_grad();
+    for (auto& t : blk.moe_expert_wout) t.zero_grad();
+    for (auto& t : blk.moe_expert_bout) t.zero_grad();
   }
   w_lm_.zero_grad();
   b_lm_.zero_grad();
+  ln_final_gamma_.zero_grad();
+  ln_final_beta_.zero_grad();
 }
 
 Params TinyGPT::parameters() {
@@ -176,9 +292,31 @@ Params TinyGPT::parameters() {
     p.tensors.push_back(&blk.b_fc);
     p.tensors.push_back(&blk.w_out);
     p.tensors.push_back(&blk.b_out);
+    p.tensors.push_back(&blk.ln_attn_gamma);
+    p.tensors.push_back(&blk.ln_attn_beta);
+    p.tensors.push_back(&blk.ln_mlp_gamma);
+    p.tensors.push_back(&blk.ln_mlp_beta);
   }
   p.tensors.push_back(&w_lm_);
   p.tensors.push_back(&b_lm_);
+  p.tensors.push_back(&ln_final_gamma_);
+  p.tensors.push_back(&ln_final_beta_);
+  for (auto& blk : blocks_) {
+    p.tensors.push_back(&blk.swiglu_gate);
+    p.tensors.push_back(&blk.swiglu_gate_b);
+    p.tensors.push_back(&blk.swiglu_up);
+    p.tensors.push_back(&blk.swiglu_up_b);
+    p.tensors.push_back(&blk.swiglu_down);
+    p.tensors.push_back(&blk.swiglu_down_b);
+  }
+  for (auto& blk : blocks_) {
+    p.tensors.push_back(&blk.moe_router_w);
+    p.tensors.push_back(&blk.moe_router_b);
+    for (auto& t : blk.moe_expert_wfc)  p.tensors.push_back(&t);
+    for (auto& t : blk.moe_expert_bfc)  p.tensors.push_back(&t);
+    for (auto& t : blk.moe_expert_wout) p.tensors.push_back(&t);
+    for (auto& t : blk.moe_expert_bout) p.tensors.push_back(&t);
+  }
   return p;
 }
 
@@ -195,9 +333,31 @@ ParamsConst TinyGPT::parameters_const() const {
     p.tensors.push_back(&blk.b_fc);
     p.tensors.push_back(&blk.w_out);
     p.tensors.push_back(&blk.b_out);
+    p.tensors.push_back(&blk.ln_attn_gamma);
+    p.tensors.push_back(&blk.ln_attn_beta);
+    p.tensors.push_back(&blk.ln_mlp_gamma);
+    p.tensors.push_back(&blk.ln_mlp_beta);
   }
   p.tensors.push_back(&w_lm_);
   p.tensors.push_back(&b_lm_);
+  p.tensors.push_back(&ln_final_gamma_);
+  p.tensors.push_back(&ln_final_beta_);
+  for (const auto& blk : blocks_) {
+    p.tensors.push_back(&blk.swiglu_gate);
+    p.tensors.push_back(&blk.swiglu_gate_b);
+    p.tensors.push_back(&blk.swiglu_up);
+    p.tensors.push_back(&blk.swiglu_up_b);
+    p.tensors.push_back(&blk.swiglu_down);
+    p.tensors.push_back(&blk.swiglu_down_b);
+  }
+  for (const auto& blk : blocks_) {
+    p.tensors.push_back(&blk.moe_router_w);
+    p.tensors.push_back(&blk.moe_router_b);
+    for (const auto& t : blk.moe_expert_wfc)  p.tensors.push_back(&t);
+    for (const auto& t : blk.moe_expert_bfc)  p.tensors.push_back(&t);
+    for (const auto& t : blk.moe_expert_wout) p.tensors.push_back(&t);
+    for (const auto& t : blk.moe_expert_bout) p.tensors.push_back(&t);
+  }
   return p;
 }
 

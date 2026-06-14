@@ -24,6 +24,15 @@ Variants:
 - `variants/mha/what_changed_vs_core.md` — what the MHA extension added/changed vs the baseline
 - `variants/mha/why_multi_head_attention.md` — why MHA matters (beyond parallelism)
 - `variants/mha/sample_processing_walkthrough.md` — step-by-step shapes/offsets: 1-head vs MHA
+- `variants/kvcache/README.md` — KV-cache variant for incremental generation
+- `variants/kvcache/learn_by_hand.md` — hand-computable KV-cache example
+- `variants/kvcache/what_changed_vs_core.md` — what the KV-cache extension added/changed
+- `variants/rope/README.md` — Rotary Position Embedding (RoPE) variant
+- `variants/rope/learn_by_hand.md` — hand-computable RoPE example
+- `variants/rope/what_changed_vs_core.md` — what the RoPE extension added/changed
+- `variants/gqa/README.md` — Grouped-Query Attention (GQA) variant
+- `variants/gqa/learn_by_hand.md` — hand-computable GQA example
+- `variants/gqa/what_changed_vs_core.md` — what the GQA extension added/changed
 
 Notes:
 - `notes/2026-01-16_project_goal_and_next_steps.md` — project intent + recommended roadmap

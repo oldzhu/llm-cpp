@@ -13,6 +13,15 @@ struct Config {
   int seq_len = 64;
   int d_model = 64;
   int n_layers = 1;
+  int norm_type = 0; // 0 = LayerNorm (default), 1 = RMSNorm
+  int mlp_type = 0;  // 0 = GELU (default), 1 = SwiGLU, 2 = MoE
+  int swiglu_interm = 0; // intermediate dim for SwiGLU (0 = 3*d_model)
+  int n_experts = 4; // number of experts for MoE (mlp_type==2)
+  int top_k = 2;     // top-K experts per token for MoE
+  int attn_type = 0; // 0 = 1-head (default), 1 = MHA, 2 = GQA
+  int pos_type = 0;  // 0 = wpe (default), 1 = RoPE
+  int attn_n_heads = 1;  // number of attention heads (for attn_type>=1)
+  int attn_n_kv = 1;     // number of KV heads (for attn_type==2, GQA)
 };
 
 struct Params {
@@ -57,9 +66,38 @@ class TinyGPT {
     nn::Tensor b_fc;   // [4C]
     nn::Tensor w_out;  // [4C,C]
     nn::Tensor b_out;  // [C]
+
+    nn::Tensor ln_attn_gamma; // [C] — LayerNorm before attention
+    nn::Tensor ln_attn_beta;  // [C]
+    nn::Tensor ln_mlp_gamma;  // [C] — LayerNorm before MLP
+    nn::Tensor ln_mlp_beta;   // [C]
+
+    // SwiGLU parameters (used when cfg.mlp_type == 1)
+    nn::Tensor swiglu_gate;   // [C, interm]
+    nn::Tensor swiglu_gate_b; // [interm]
+    nn::Tensor swiglu_up;     // [C, interm]
+    nn::Tensor swiglu_up_b;   // [interm]
+    nn::Tensor swiglu_down;   // [interm, C]
+    nn::Tensor swiglu_down_b; // [C]
+
+    // MoE parameters (used when cfg.mlp_type == 2)
+    nn::Tensor moe_router_w; // [C, n_experts]
+    nn::Tensor moe_router_b; // [n_experts]
+    // Expert weights stored as flat vectors of Tensors (n_experts * 4)
+    std::vector<nn::Tensor> moe_expert_wfc;
+    std::vector<nn::Tensor> moe_expert_bfc;
+    std::vector<nn::Tensor> moe_expert_wout;
+    std::vector<nn::Tensor> moe_expert_bout;
   };
 
   std::vector<Block> blocks_;
+
+  // Final LN before LM head
+  nn::Tensor ln_final_gamma_; // [C]
+  nn::Tensor ln_final_beta_;  // [C]
+
+  // MoE auxiliary loss (populated by forward_logits when mlp_type==2)
+  float moe_balance_loss_ = 0.0f;
 
   // Final LM head
   nn::Tensor w_lm_; // [C,V]
