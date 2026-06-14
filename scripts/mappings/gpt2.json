@@ -18,30 +18,30 @@
   },
 
   "params": [
-    { "id": 0,  "name": "wte",              "hf": "wte.weight",                     "op": "identity" },
-    { "id": 1,  "name": "wpe",              "hf": "wpe.weight",                     "op": "identity" }
+    { "id": 0,  "name": "wte",              "hf": "transformer.wte.weight",                     "op": "identity" },
+    { "id": 1,  "name": "wpe",              "hf": "transformer.wpe.weight",                     "op": "identity" }
   ],
 
   "layer_params": [
-    { "off": 0,  "name": "w_qkv",            "hf": "h.{L}.attn.c_attn.weight",      "op": "transpose" },
-    { "off": 1,  "name": "b_qkv",            "hf": "h.{L}.attn.c_attn.bias",        "op": "identity" },
-    { "off": 2,  "name": "w_proj",           "hf": "h.{L}.attn.c_proj.weight",      "op": "identity" },
-    { "off": 3,  "name": "b_proj",           "hf": "h.{L}.attn.c_proj.bias",        "op": "identity" },
-    { "off": 4,  "name": "w_fc",             "hf": "h.{L}.mlp.c_fc.weight",         "op": "transpose" },
-    { "off": 5,  "name": "b_fc",             "hf": "h.{L}.mlp.c_fc.bias",           "op": "identity" },
-    { "off": 6,  "name": "w_out",            "hf": "h.{L}.mlp.c_proj.weight",       "op": "transpose" },
-    { "off": 7,  "name": "b_out",            "hf": "h.{L}.mlp.c_proj.bias",         "op": "identity" },
-    { "off": 8,  "name": "ln_attn_gamma",    "hf": "h.{L}.ln_1.weight",             "op": "identity" },
-    { "off": 9,  "name": "ln_attn_beta",     "hf": "h.{L}.ln_1.bias",               "op": "identity" },
-    { "off": 10, "name": "ln_mlp_gamma",     "hf": "h.{L}.ln_2.weight",             "op": "identity" },
-    { "off": 11, "name": "ln_mlp_beta",      "hf": "h.{L}.ln_2.bias",               "op": "identity" }
+    { "off": 0,  "name": "w_qkv",            "hf": "transformer.h.{L}.attn.c_attn.weight",      "op": "transpose" },
+    { "off": 1,  "name": "b_qkv",            "hf": "transformer.h.{L}.attn.c_attn.bias",        "op": "identity" },
+    { "off": 2,  "name": "w_proj",           "hf": "transformer.h.{L}.attn.c_proj.weight",      "op": "identity" },
+    { "off": 3,  "name": "b_proj",           "hf": "transformer.h.{L}.attn.c_proj.bias",        "op": "identity" },
+    { "off": 4,  "name": "w_fc",             "hf": "transformer.h.{L}.mlp.c_fc.weight",         "op": "transpose" },
+    { "off": 5,  "name": "b_fc",             "hf": "transformer.h.{L}.mlp.c_fc.bias",           "op": "identity" },
+    { "off": 6,  "name": "w_out",            "hf": "transformer.h.{L}.mlp.c_proj.weight",       "op": "transpose" },
+    { "off": 7,  "name": "b_out",            "hf": "transformer.h.{L}.mlp.c_proj.bias",         "op": "identity" },
+    { "off": 8,  "name": "ln_attn_gamma",    "hf": "transformer.h.{L}.ln_1.weight",             "op": "identity" },
+    { "off": 9,  "name": "ln_attn_beta",     "hf": "transformer.h.{L}.ln_1.bias",               "op": "identity" },
+    { "off": 10, "name": "ln_mlp_gamma",     "hf": "transformer.h.{L}.ln_2.weight",             "op": "identity" },
+    { "off": 11, "name": "ln_mlp_beta",      "hf": "transformer.h.{L}.ln_2.bias",               "op": "identity" }
   ],
 
   "post_params": [
-    { "off": 0,  "name": "w_lm",             "hf": "lm_head.weight",                "op": "transpose_or_wte", "tied": "wte" },
+    { "off": 0,  "name": "w_lm",             "hf": "transformer.lm_head.weight",                "op": "transpose_or_wte", "tied": "wte" },
     { "off": 1,  "name": "b_lm",             "hf": null,                             "op": "zeros", "shape_var": "V" },
-    { "off": 2,  "name": "ln_final_gamma",   "hf": "ln_f.weight",                   "op": "identity" },
-    { "off": 3,  "name": "ln_final_beta",    "hf": "ln_f.bias",                     "op": "identity" }
+    { "off": 2,  "name": "ln_final_gamma",   "hf": "transformer.ln_f.weight",                   "op": "identity" },
+    { "off": 3,  "name": "ln_final_beta",    "hf": "transformer.ln_f.bias",                     "op": "identity" }
   ],
 
   "extra_tensors_per_layer": [

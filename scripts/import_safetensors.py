@@ -24,6 +24,8 @@ except ImportError:
 
 def parse_shape(shape_spec, cfg):
     """Resolve shape specification like ["C","3*C"] or "3*C" to actual ints."""
+    if shape_spec is None:
+        return [0]
     C, T, V = cfg.get("d_model", 0), cfg.get("seq_len", 0), cfg.get("vocab_size", 0)
     interm = cfg.get("swiglu_interm", 0) or (3 * C) if C > 0 else 0
     if isinstance(shape_spec, list):
@@ -109,6 +111,9 @@ def apply_op(tensor, op, shape, cfg, extra=None):
     C = cfg.get("d_model", 0)
     
     if op == "identity":
+        if tensor is None:
+            shape_vals = parse_shape(shape, cfg) if shape else [0]
+            return np.zeros(shape_vals, dtype=np.float32)
         arr = tensor.float().numpy().astype(np.float32)
         # Ensure contiguous
         return np.ascontiguousarray(arr)
@@ -122,7 +127,7 @@ def apply_op(tensor, op, shape, cfg, extra=None):
     
     elif op == "zeros":
         if isinstance(shape, list):
-            shape_vals = shape
+            shape_vals = parse_shape(shape, cfg)  # resolve "C", "3*C" etc in list
         elif isinstance(shape, str):
             shape_vals = resolve_shape_var(shape, cfg)
         else:
@@ -135,7 +140,7 @@ def apply_op(tensor, op, shape, cfg, extra=None):
         if tensor is not None:
             arr = tensor.float().numpy().astype(np.float32)
             return np.ascontiguousarray(arr.T)
-        elif tie_name and extra and extra.get("_tied"):
+        elif tie_name and extra is not None and extra.get("_tied") is not None and extra["_tied"].size > 0:
             return np.ascontiguousarray(extra["_tied"].copy())
         else:
             shape_vals = parse_shape(shape, cfg)
@@ -236,7 +241,7 @@ def write_checkpoint(output_prefix, cfg, tensors_dict):
             f.write(struct.pack("<Q", arr.shape[0]))
             f.write(arr.tobytes())
     
-    print(f"Wrote {len(tensors_dict)} tensors → {bin_path}")
+    print(f"Wrote {len(tensors_dict)} tensors -> {bin_path}")
     print(f"Config → {json_path}")
 
 
@@ -263,12 +268,22 @@ def import_model(model_dir, output_prefix, mapping_name, copy_tokenizer=False):
     with open(cfg_path) as f:
         hf_cfg = json.load(f)
     
-    # Build our config
-    C = hf_cfg.get(mapping["config_map"].get("d_model", "hidden_size"), 0)
-    V = hf_cfg.get(mapping["config_map"].get("vocab_size", "vocab_size"), 256)
-    T = hf_cfg.get(mapping["config_map"].get("seq_len", "max_position_embeddings"), 64)
-    n_layers = hf_cfg.get(mapping["config_map"].get("n_layers", "num_hidden_layers"), 1)
-    interm = hf_cfg.get(mapping["config_map"].get("swiglu_interm"), 0) or (4 * C if C > 0 else 0)
+    # Build reverse map: our_key → hf_key  (config_map is hf_key → our_key)
+    cm = mapping["config_map"]
+    rev_map = {v: k for k, v in cm.items()}
+    def hf_val(our_key, default_val=0):
+        hf_key = rev_map.get(our_key, our_key)
+        return hf_cfg.get(hf_key, default_val)
+    
+    C = hf_val("d_model", 0)
+    V = hf_val("vocab_size", 256)
+    T = hf_val("seq_len", 64)
+    n_layers = hf_val("n_layers", 1)
+    interm_key = rev_map.get("swiglu_interm", None)
+    if interm_key:
+        interm = hf_cfg.get(interm_key, 0) or (4 * C if C > 0 else 0)
+    else:
+        interm = 4 * C if C > 0 else 0
     
     cfg = {
         "vocab_size": V, "seq_len": T, "d_model": C, "n_layers": n_layers,
@@ -368,7 +383,8 @@ def import_model(model_dir, output_prefix, mapping_name, copy_tokenizer=False):
     
     # Extra tensors per layer (SwiGLU zeros for GPT-2, MoE zeros)
     for p in mapping.get("extra_tensors_per_layer", []):
-        shape_vals = parse_shape(p["shape"], cfg)
+        shape = p.get("shape_var") or p.get("shape")  # support both keys
+        shape_vals = parse_shape(shape, cfg)
         for li in range(n_layers):
             arr = np.zeros(shape_vals, dtype=np.float32)
             tensors.append((p["name"], arr))
@@ -376,7 +392,8 @@ def import_model(model_dir, output_prefix, mapping_name, copy_tokenizer=False):
     # MoE expert tensors
     n_exp = cfg["n_experts"]
     for p in mapping.get("extra_expert_tensors", []):
-        shape_vals = parse_shape(p["shape"], cfg)
+        shape = p.get("shape_var") or p.get("shape")
+        shape_vals = parse_shape(shape, cfg)
         for li in range(n_layers):
             for e in range(n_exp):
                 arr = np.zeros(shape_vals, dtype=np.float32)

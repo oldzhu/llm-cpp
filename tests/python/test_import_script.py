@@ -75,11 +75,12 @@ class TestSafetensorsRead:
 
         # Create tiny safetensors
         try:
+            import torch
             from safetensors.torch import save_file
         except ImportError:
-            pytest.skip("safetensors not installed")
+            pytest.skip("safetensors/torch not installed")
 
-        tensors = {"wte.weight": np.random.randn(50257, 768).astype(np.float32)}
+        tensors = {"wte.weight": torch.randn(50257, 768)}
         sf_path = tmp_path / "model.safetensors"
         save_file(tensors, str(sf_path))
 
