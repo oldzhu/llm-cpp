@@ -268,3 +268,10 @@ function applyI18n() {
 }
 
 document.addEventListener("DOMContentLoaded", applyI18n);
+
+// Expose globals for testing
+window.I18N = I18N;
+window.t = t;
+window.currentLang = currentLang;
+window.toggleLang = toggleLang;
+window.applyI18n = applyI18n;

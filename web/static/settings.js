@@ -83,3 +83,5 @@ class AISettings {
 }
 
 const aiSettings = new AISettings();
+window.aiSettings = aiSettings;
+window.AISettings = AISettings;

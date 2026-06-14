@@ -257,3 +257,6 @@ class ArchitectureDiagram {
 }
 
 const archDiagram = new ArchitectureDiagram();
+window.ARCH_COMPONENTS = ARCH_COMPONENTS;
+window.archDiagram = archDiagram;
+window.ArchitectureDiagram = ArchitectureDiagram;
