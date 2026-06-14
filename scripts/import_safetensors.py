@@ -322,6 +322,8 @@ def import_model(model_dir, output_prefix, mapping_name, copy_tokenizer=False):
     
     def get_hf(name_template, layer_idx=None):
         """Resolve HF tensor name, with {L} replaced by layer index."""
+        if name_template is None:
+            return None
         tname = name_template
         if layer_idx is not None:
             tname = tname.replace("{L}", str(layer_idx))
@@ -364,7 +366,7 @@ def import_model(model_dir, output_prefix, mapping_name, copy_tokenizer=False):
             shape = p["shape"]
         extra = None
         if p["op"] == "transpose_or_wte":
-            extra = {"tied": p.get("tied"), "_tied": wte_arr if not t else None}
+            extra = {"tied": p.get("tied"), "_tied": wte_arr if t is None else None}
         arr = apply_op(t, p["op"], shape, cfg, extra)
         tensors.append((p["name"], arr))
     
