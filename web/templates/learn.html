@@ -1,20 +1,20 @@
 <div class="learn-panel">
-  <h2>How a GPT Works — From Text to Next Token</h2>
-  <p class="learn-intro">Follow the journey of text through a Transformer, step by step. Click any code link to see the C++ implementation.</p>
+  <h2 data-i18n="learn.title">How a GPT Works — From Text to Next Token</h2>
+  <p class="learn-intro" data-i18n-html="learn.intro">Follow the journey of text through a Transformer, step by step. Click any code link to see the C++ implementation.</p>
 
   <div class="learn-cards">
     <div class="learn-card">
       <div class="learn-num">1</div>
       <div class="learn-body">
-        <h3>Tokenization</h3>
-        <p>Text is split into tokens — the smallest units the model processes.</p>
-        <p><strong>Byte tokenizer</strong>: Each byte (0-255) is a token. Simple, fast, vocabulary size = 256.</p>
-        <p><strong>BPE tokenizer</strong>: Common character pairs are merged into subword tokens (GPT-2 uses 50,257 tokens). More efficient but more complex.</p>
-        <div class="learn-formula"><code>"hello" → [104, 101, 108, 108, 111]</code></div>
+        <h3 data-i18n="learn.ch1.title">Tokenization</h3>
+        <p data-i18n-html="learn.ch1.p1">Text is split into tokens — the smallest units the model processes.</p>
+        <p data-i18n-html="learn.ch1.p2"><strong>Byte tokenizer</strong>: Each byte (0–255) is a token. Simple, fast, vocabulary size = 256.</p>
+        <p data-i18n-html="learn.ch1.p3"><strong>BPE tokenizer</strong>: Common character pairs are merged into subword tokens (GPT-2 uses 50,257 tokens). More efficient but more complex.</p>
+        <div class="learn-formula" data-i18n-html="learn.ch1.formula"><code>"hello" → [104, 101, 108, 108, 111]</code></div>
         <div class="learn-links">
           <a href="#" onclick="codeUI.loadFile('src/tokenizer/byte_tokenizer.cpp')">📄 ByteTokenizer</a>
           <a href="#" onclick="codeUI.loadFile('src/tokenizer/bpe_tokenizer.cpp')">📄 BpeTokenizer</a>
-          <a href="#" onclick="codeUI.loadFile('docs/tokenizer_choice_gpt2_bpe_vs_sentencepiece.md')">📖 Why BPE?</a>
+          <a href="#" onclick="codeUI.loadFile('docs/tokenizer_choice_gpt2_bpe_vs_sentencepiece.md')">📖 为什么 BPE？</a>
         </div>
       </div>
     </div>
@@ -22,12 +22,12 @@
     <div class="learn-card">
       <div class="learn-num">2</div>
       <div class="learn-body">
-        <h3>Embeddings</h3>
-        <p>Token IDs are meaningless numbers. Embeddings convert them into meaningful vectors in a high-dimensional space.</p>
-        <p><strong>Token embedding</strong>: Each token ID looks up a row in a table <code>wte[V, C]</code> → gets a C-dimensional vector.</p>
-        <p><strong>Position embedding</strong>: Since attention has no built-in order sense, we add <code>wpe[pos]</code> to encode position.</p>
-        <div class="learn-formula"><code>X[b,t] = Wte[tokens[b,t]] + Wpe[t]</code></div>
-        <div class="learn-shape">wte: [V,C] &nbsp; wpe: [T,C] &nbsp; X: [B,T,C]</div>
+        <h3 data-i18n="learn.ch2.title">Embeddings</h3>
+        <p data-i18n-html="learn.ch2.p1">Token IDs are meaningless numbers. Embeddings convert them into meaningful vectors in a high-dimensional space.</p>
+        <p data-i18n-html="learn.ch2.p2"><strong>Token embedding</strong>: Each token ID looks up a row in a table <code>wte[V, C]</code> → gets a C-dimensional vector.</p>
+        <p data-i18n-html="learn.ch2.p3"><strong>Position embedding</strong>: Since attention has no built-in order sense, we add <code>wpe[pos]</code> to encode position.</p>
+        <div class="learn-formula" data-i18n-html="learn.ch2.formula"><code>X[b,t] = Wte[tokens[b,t]] + Wpe[t]</code></div>
+        <div class="learn-shape" data-i18n="learn.ch2.shape">wte: [V,C] &nbsp; wpe: [T,C] &nbsp; X: [B,T,C]</div>
         <div class="learn-links">
           <a href="#" onclick="codeUI.loadFile('src/ops.cpp')">📄 embedding()</a>
           <a href="#" onclick="codeUI.loadFile('src/model.cpp')">📄 add_positional()</a>
@@ -38,13 +38,13 @@
     <div class="learn-card">
       <div class="learn-num">3</div>
       <div class="learn-body">
-        <h3>Causal Self-Attention</h3>
-        <p>Each token looks at all <strong>previous</strong> tokens (causal mask — can't see the future) and decides which ones are relevant.</p>
-        <p><strong>Step 1 — QKV Projection</strong>: Input X is projected into three matrices: Query (what am I looking for?), Key (what do I offer?), Value (what information do I carry?).</p>
-        <p><strong>Step 2 — Scores</strong>: For each position i, compute dot product with all keys j ≤ i: <code>S[i,j] = Q[i]·K[j] / √C</code></p>
-        <p><strong>Step 3 — Softmax + Weighted Sum</strong>: Convert scores to probabilities, then compute weighted sum of values: <code>Y[i] = Σⱼ softmax(S[i,j]) · V[j]</code></p>
-        <div class="learn-formula"><code>Q,K,V = X·Wqkv + bqkv<br>S[i,j] = Q[i]·K[j]/√C + mask(j>i→-∞)<br>P = softmax(S)<br>Y[i] = Σⱼ P[i,j]·V[j]</code></div>
-        <div class="learn-shape">Wqkv: [C,3C] &nbsp; Q/K/V: [B,T,C] &nbsp; Scores: [B,T,T]</div>
+        <h3 data-i18n="learn.ch3.title">Causal Self-Attention</h3>
+        <p data-i18n-html="learn.ch3.p1">Each token looks at all <strong>previous</strong> tokens (causal mask — can't see the future) and decides which ones are relevant.</p>
+        <p data-i18n-html="learn.ch3.p2"><strong>Step 1 — QKV Projection</strong>: Input X is projected into three matrices: Query (what am I looking for?), Key (what do I offer?), Value (what information do I carry?).</p>
+        <p data-i18n-html="learn.ch3.p3"><strong>Step 2 — Scores</strong>: For each position i, compute dot product with all keys j ≤ i: <code>S[i,j] = Q[i]·K[j] / √C</code></p>
+        <p data-i18n-html="learn.ch3.p4"><strong>Step 3 — Softmax + Weighted Sum</strong>: Convert scores to probabilities, then compute weighted sum of values: <code>Y[i] = Σ_j softmax(S[i,j]) · V[j]</code></p>
+        <div class="learn-formula" data-i18n-html="learn.ch3.formula"><code>Q,K,V = X·Wqkv + bqkv<br>S[i,j] = Q[i]·K[j]/√C + mask(j>i→-∞)<br>P = softmax(S)<br>Y[i] = Σ_j P[i,j]·V[j]</code></div>
+        <div class="learn-shape" data-i18n="learn.ch3.shape">Wqkv: [C,3C] &nbsp; Q/K/V: [B,T,C] &nbsp; Scores: [B,T,T]</div>
         <div class="learn-links">
           <a href="#" onclick="codeUI.loadFile('src/ops.cpp')">📄 self_attention_1h()</a>
           <a href="#" onclick="codeUI.loadFile('docs/attention_indexing_trace.md')">📖 Attention trace</a>
@@ -55,12 +55,12 @@
     <div class="learn-card">
       <div class="learn-num">4</div>
       <div class="learn-body">
-        <h3>Multi-Head Attention (Variant)</h3>
-        <p>Instead of one attention, use multiple heads. Each head looks at different aspects of the tokens.</p>
-        <p><strong>Split</strong>: C = n_heads × head_dim. Q,K,V reshaped to [B,T,n_heads,head_dim].</p>
-        <p><strong>Per head</strong>: Attention computed independently.</p>
-        <p><strong>Concat</strong>: Heads concatenated back to [B,T,C] and projected.</p>
-        <div class="learn-formula"><code>C = H×D &nbsp; Q_h,K_h,V_h: [B,T,D]<br>S_h[i,j] = Q_h[i]·K_h[j]/√D + mask<br>Y = concat(Y_0,...,Y_{H-1})·Wproj</code></div>
+        <h3 data-i18n="learn.ch4.title">Multi-Head Attention (Variant)</h3>
+        <p data-i18n-html="learn.ch4.p1">Instead of one attention, use multiple heads. Each head looks at different aspects of the tokens.</p>
+        <p data-i18n-html="learn.ch4.p2"><strong>Split</strong>: C = n_heads × head_dim. Q,K,V reshaped to [B,T,n_heads,head_dim].</p>
+        <p data-i18n-html="learn.ch4.p3"><strong>Per head</strong>: Attention computed independently.</p>
+        <p data-i18n-html="learn.ch4.p4"><strong>Concat</strong>: Heads concatenated back to [B,T,C] and projected.</p>
+        <div class="learn-formula" data-i18n-html="learn.ch4.formula"><code>C = H×D &nbsp; Q_h,K_h,V_h: [B,T,D]<br>S_h[i,j] = Q_h[i]·K_h[j]/√D + mask<br>Y = concat(Y_0,...,Y_{H-1})·Wproj</code></div>
         <div class="learn-links">
           <a href="#" onclick="codeUI.loadFile('src/variants/mha/mha_attention.cpp')">📄 self_attention_mha()</a>
           <a href="#" onclick="codeUI.loadFile('docs/variants/mha/learn_by_hand.md')">📖 Learn by hand</a>
@@ -71,12 +71,12 @@
     <div class="learn-card">
       <div class="learn-num">5</div>
       <div class="learn-body">
-        <h3>Feed-Forward Network (MLP)</h3>
-        <p>After attention, each token goes through a small neural network independently. This adds non-linearity and capacity.</p>
-        <p><strong>Standard (GELU)</strong>: Two linear layers with GELU activation: <code>FF = GELU(X·Wfc + bfc)·Wout + bout</code></p>
-        <p><strong>SwiGLU (Variant)</strong>: Gated variant: <code>gate = SiLU(X·Wg), up = X·Wu, FF = (gate⊙up)·Wd</code></p>
-        <p><strong>MoE (Variant)</strong>: Multiple expert FFNs with a router that selects which experts to use per token.</p>
-        <div class="learn-formula"><code>GELU: FF = GELU(X·Wfc)·Wout<br>SwiGLU: FF = (SiLU(X·Wgate)⊙(X·Wup))·Wdown</code></div>
+        <h3 data-i18n="learn.ch5.title">Feed-Forward Network (MLP)</h3>
+        <p data-i18n-html="learn.ch5.p1">After attention, each token goes through a small neural network independently. This adds non-linearity and capacity.</p>
+        <p data-i18n-html="learn.ch5.p2"><strong>Standard (GELU)</strong>: Two linear layers with GELU activation: <code>FF = GELU(X·Wfc + bfc)·Wout + bout</code></p>
+        <p data-i18n-html="learn.ch5.p3"><strong>SwiGLU (Variant)</strong>: Gated variant: <code>gate = SiLU(X·Wg), up = X·Wu, FF = (gate⊙up)·Wd</code></p>
+        <p data-i18n-html="learn.ch5.p4"><strong>MoE (Variant)</strong>: Multiple expert FFNs with a router that selects which experts to use per token.</p>
+        <div class="learn-formula" data-i18n-html="learn.ch5.formula"><code>GELU: FF = GELU(X·Wfc)·Wout<br>SwiGLU: FF = (SiLU(X·Wgate)⊙(X·Wup))·Wdown</code></div>
         <div class="learn-links">
           <a href="#" onclick="codeUI.loadFile('src/model.cpp')">📄 forward_logits (MLP section)</a>
           <a href="#" onclick="codeUI.loadFile('src/variants/moe/moe_mlp.cpp')">📄 MoE MLP</a>
@@ -87,12 +87,12 @@
     <div class="learn-card">
       <div class="learn-num">6</div>
       <div class="learn-body">
-        <h3>LayerNorm & RMSNorm</h3>
-        <p>Normalization keeps values in a healthy range so training doesn't diverge or stall.</p>
-        <p><strong>LayerNorm</strong>: Subtract mean, divide by standard deviation, then apply learnable scale γ and shift β.</p>
-        <p><strong>RMSNorm</strong>: Simpler — just divide by RMS. No mean subtraction. Used in LLaMA.</p>
-        <div class="learn-formula"><code>LayerNorm: y = (x-μ)/σ·γ + β<br>RMSNorm: y = x/rms·γ</code></div>
-        <div class="learn-shape">γ: [C] &nbsp; β: [C] (LN only)</div>
+        <h3 data-i18n="learn.ch6.title">LayerNorm &amp; RMSNorm</h3>
+        <p data-i18n-html="learn.ch6.p1">Normalization keeps values in a healthy range so training doesn't diverge or stall.</p>
+        <p data-i18n-html="learn.ch6.p2"><strong>LayerNorm</strong>: Subtract mean, divide by standard deviation, then apply learnable scale γ and shift β.</p>
+        <p data-i18n-html="learn.ch6.p3"><strong>RMSNorm</strong>: Simpler — just divide by RMS. No mean subtraction. Used in LLaMA.</p>
+        <div class="learn-formula" data-i18n-html="learn.ch6.formula"><code>LayerNorm: y = (x-μ)/σ·γ + β<br>RMSNorm: y = x/rms·γ</code></div>
+        <div class="learn-shape" data-i18n="learn.ch6.shape">γ: [C] &nbsp; β: [C] (LN only)</div>
         <div class="learn-links">
           <a href="#" onclick="codeUI.loadFile('src/ops.cpp')">📄 layernorm_affine() + rmsnorm_affine()</a>
         </div>
@@ -102,13 +102,13 @@
     <div class="learn-card">
       <div class="learn-num">7</div>
       <div class="learn-body">
-        <h3>Training Loop</h3>
-        <p>How the model learns from data — the engine that turns random weights into a language model.</p>
-        <p><strong>Forward pass</strong>: Tokens → embeddings → layers → LM head → logits [B,T,V]</p>
-        <p><strong>Loss</strong>: Cross-entropy between predicted probabilities and actual next token. <code>L = -log(p_correct)</code></p>
-        <p><strong>Backward</strong>: Compute ∂L/∂w for every parameter using chain rule (autograd).</p>
-        <p><strong>Optimizer step</strong>: AdamW updates weights: <code>w ← w - lr · m/(√v + ε) - lr·λ·w</code> (with momentum m, velocity v, and weight decay λ).</p>
-        <div class="learn-formula"><code>Forward:  X = Embed(tokens) → layers → logits<br>Loss:    CE = -1/N Σ log(p_target)<br>Backward: ∂L/∂w (autograd graph)<br>Update:  w -= lr * AdamW(gradient)</code></div>
+        <h3 data-i18n="learn.ch7.title">Training Loop</h3>
+        <p data-i18n-html="learn.ch7.p1">How the model learns from data — the engine that turns random weights into a language model.</p>
+        <p data-i18n-html="learn.ch7.p2"><strong>Forward pass</strong>: Tokens → embeddings → layers → LM head → logits [B,T,V]</p>
+        <p data-i18n-html="learn.ch7.p3"><strong>Loss</strong>: Cross-entropy between predicted probabilities and actual next token. <code>L = -log(p_correct)</code></p>
+        <p data-i18n-html="learn.ch7.p4"><strong>Backward</strong>: Compute ∂L/∂w for every parameter using chain rule (autograd).</p>
+        <p data-i18n-html="learn.ch7.p5"><strong>Optimizer step</strong>: AdamW updates weights: <code>w ← w - lr · m/(√v + ε) - lr·λ·w</code> (with momentum m, velocity v, and weight decay λ).</p>
+        <div class="learn-formula" data-i18n-html="learn.ch7.formula"><code>Forward:  X = Embed(tokens) → layers → logits<br>Loss:    CE = -1/N Σ log(p_target)<br>Backward: ∂L/∂w (autograd graph)<br>Update:  w -= lr * AdamW(gradient)</code></div>
         <div class="learn-links">
           <a href="#" onclick="codeUI.loadFile('src/model.cpp')">📄 forward_logits() + loss()</a>
           <a href="#" onclick="codeUI.loadFile('src/optim.cpp')">📄 AdamW optimizer</a>
@@ -119,7 +119,7 @@
   </div>
 
   <div class="learn-cta">
-    <h3>Ready to try?</h3>
-    <p>Switch to the <strong>Config</strong> tab to configure and start training your own model, or use the <strong>Code</strong> tab to explore the source code with AI assistance.</p>
+    <h3 data-i18n="learn.cta.title">Ready to try?</h3>
+    <p data-i18n-html="learn.cta.body">Switch to the <strong>Config</strong> tab to configure and start training your own model, or use the <strong>Code</strong> tab to explore the source code with AI assistance.</p>
   </div>
 </div>
