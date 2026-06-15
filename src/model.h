@@ -19,10 +19,12 @@ struct Config {
   int n_experts = 4; // number of experts for MoE (mlp_type==2)
   int top_k = 2;     // top-K experts per token for MoE
   int attn_type = 0; // 0 = 1-head (default), 1 = MHA, 2 = GQA, 3 = MLA
-  int pos_type = 0;  // 0 = wpe (default), 1 = RoPE
+  int pos_type = 0;  // 0 = wpe (default), 1 = RoPE, 2 = ALiBi, 3 = NoPE
   int attn_n_heads = 1;  // number of attention heads (for attn_type>=1)
   int attn_n_kv = 1;     // number of KV heads (for attn_type==2, GQA)
   int mla_latent_dim = 0; // latent dim for MLA (attn_type==3, 0 = C/4)
+  int qk_norm = 0; // 0 = no QK norm, 1 = apply RMSNorm to Q and K before attention
+  int swin_win = 0; // sliding window size (0 = disabled, e.g. 4096 for Mistral-style)
 };
 
 struct Params {
