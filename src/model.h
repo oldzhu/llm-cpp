@@ -18,6 +18,7 @@ struct Config {
   int swiglu_interm = 0; // intermediate dim for SwiGLU (0 = 3*d_model)
   int n_experts = 4; // number of experts for MoE (mlp_type==2)
   int top_k = 2;     // top-K experts per token for MoE
+  int n_shared = 0;  // number of shared experts (always active, 0=disabled)
   int attn_type = 0; // 0 = 1-head (default), 1 = MHA, 2 = GQA, 3 = MLA
   int pos_type = 0;  // 0 = wpe (default), 1 = RoPE, 2 = ALiBi, 3 = NoPE
   int attn_n_heads = 1;  // number of attention heads (for attn_type>=1)
@@ -91,6 +92,11 @@ class TinyGPT {
     std::vector<nn::Tensor> moe_expert_bfc;
     std::vector<nn::Tensor> moe_expert_wout;
     std::vector<nn::Tensor> moe_expert_bout;
+    // Shared experts (always active, used when n_shared > 0)
+    std::vector<nn::Tensor> moe_shared_wfc;
+    std::vector<nn::Tensor> moe_shared_bfc;
+    std::vector<nn::Tensor> moe_shared_wout;
+    std::vector<nn::Tensor> moe_shared_bout;
     // MLA parameters (used when cfg.attn_type == 3)
     nn::Tensor mla_w_q;   // [C, C]
     nn::Tensor mla_b_q;   // [C]

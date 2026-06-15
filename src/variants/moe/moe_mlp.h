@@ -28,6 +28,7 @@ MoEOutput moe_mlp_forward(const Tensor& x_2d,           // [N, C]
                            const std::vector<const Tensor*>& expert_params, // n_experts * 4 pointers
                            int n_experts,
                            int top_k,
-                           int interm_dim);
+                           int interm_dim,
+                           const std::vector<const Tensor*>& shared_params = {}); // n_shared * 4 pointers
 
 } // namespace nn::variants::moe

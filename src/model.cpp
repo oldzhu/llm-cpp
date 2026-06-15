@@ -76,6 +76,13 @@ TinyGPT::TinyGPT(const Config& cfg, std::uint64_t seed) : cfg_(cfg) {
       blk.moe_expert_wout[static_cast<std::size_t>(e)] = Tensor::randn({4 * C, C}, init_std(4 * C), s ^ (9 + e * 4 + 1), true);
       blk.moe_expert_bout[static_cast<std::size_t>(e)] = Tensor::zeros({C}, true);
     }
+    // Shared experts
+    for (int e = 0; e < cfg_.n_shared; ++e) {
+      blk.moe_shared_wfc.emplace_back(Tensor::randn({C, 4*C}, init_std(C), s ^ (100 + e*4), true));
+      blk.moe_shared_bfc.emplace_back(Tensor::zeros({4*C}, true));
+      blk.moe_shared_wout.emplace_back(Tensor::randn({4*C, C}, init_std(4*C), s ^ (100 + e*4 + 1), true));
+      blk.moe_shared_bout.emplace_back(Tensor::zeros({C}, true));
+    }
 
     // MLA params
     const int mla_L = (cfg_.mla_latent_dim > 0) ? cfg_.mla_latent_dim : (C / 4);
@@ -251,8 +258,15 @@ Tensor TinyGPT::forward_logits(const std::vector<std::int32_t>& tokens_bt, int B
         expert_ptrs.push_back(&blk.moe_expert_wout[static_cast<std::size_t>(e)]);
         expert_ptrs.push_back(&blk.moe_expert_bout[static_cast<std::size_t>(e)]);
       }
+      std::vector<const Tensor*> shared_ptrs;
+      for (int e = 0; e < cfg_.n_shared; ++e) {
+        shared_ptrs.push_back(&blk.moe_shared_wfc[static_cast<std::size_t>(e)]);
+        shared_ptrs.push_back(&blk.moe_shared_bfc[static_cast<std::size_t>(e)]);
+        shared_ptrs.push_back(&blk.moe_shared_wout[static_cast<std::size_t>(e)]);
+        shared_ptrs.push_back(&blk.moe_shared_bout[static_cast<std::size_t>(e)]);
+      }
       auto moe_out = nn::variants::moe::moe_mlp_forward(x2, blk.moe_router_w, blk.moe_router_b,
-                                                          expert_ptrs, cfg_.n_experts, cfg_.top_k, 4 * C);
+                                                           expert_ptrs, cfg_.n_experts, cfg_.top_k, 4 * C, shared_ptrs);
       moe_balance_loss_ += (*moe_out.balance_loss.data)[0];
       ff = nn::reshape(moe_out.y, {B, T, C});
     }

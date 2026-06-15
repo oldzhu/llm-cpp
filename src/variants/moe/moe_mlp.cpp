@@ -15,7 +15,8 @@ MoEOutput moe_mlp_forward(const Tensor& x_2d,
                            const std::vector<const Tensor*>& expert_params,
                            int n_experts,
                            int top_k,
-                           int interm_dim) {
+                           int interm_dim,
+                           const std::vector<const Tensor*>& shared_params) {
   if (x_2d.shape.size() != 2) throw std::runtime_error("MoE: x must be [N, C]");
   const int N = x_2d.shape[0];
   const int C = x_2d.shape[1];
@@ -125,6 +126,35 @@ MoEOutput moe_mlp_forward(const Tensor& x_2d,
       for (int c = 0; c < C; ++c) {
         const float val = (*proj.data)[static_cast<std::size_t>(r) * C + c] + (*b_out->data)[static_cast<std::size_t>(c)];
         (*y.data)[static_cast<std::size_t>(n) * C + c] += gate * val;
+      }
+    }
+  }
+
+  // 3b) Shared experts — always active, output scaled by 1/n_shared
+  int n_shared = static_cast<int>(shared_params.size()) / 4;
+  if (n_shared > 0) {
+    for (int se = 0; se < n_shared; ++se) {
+      const Tensor* w_fc  = shared_params[static_cast<std::size_t>(se) * 4 + 0];
+      const Tensor* b_fc  = shared_params[static_cast<std::size_t>(se) * 4 + 1];
+      const Tensor* w_out = shared_params[static_cast<std::size_t>(se) * 4 + 2];
+      const Tensor* b_out = shared_params[static_cast<std::size_t>(se) * 4 + 3];
+
+      Tensor h_raw = nn::matmul2d(x_2d, *w_fc); // [N, interm_dim]
+      Tensor gelu_out = Tensor::zeros({N, interm_dim}, false);
+      for (int i = 0; i < N * interm_dim; ++i) {
+        const float v = (*h_raw.data)[i] + (*b_fc->data)[static_cast<std::size_t>(i % interm_dim)];
+        const float c = 0.044715f; const float s = 0.7978845608f;
+        const float u = s * (v + c * v * v * v);
+        const float t = std::tanh(u);
+        (*gelu_out.data)[i] = 0.5f * v * (1.0f + t);
+      }
+      Tensor proj = nn::matmul2d(gelu_out, *w_out); // [N, C]
+      const float scale = 1.0f / static_cast<float>(n_shared);
+      for (int n = 0; n < N; ++n) {
+        for (int c = 0; c < C; ++c) {
+          (*y.data)[static_cast<std::size_t>(n) * C + c] +=
+              scale * ((*proj.data)[static_cast<std::size_t>(n) * C + c] + (*b_out->data)[static_cast<std::size_t>(c)]);
+        }
       }
     }
   }
