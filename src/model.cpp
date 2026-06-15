@@ -184,15 +184,36 @@ Tensor TinyGPT::forward_logits(const std::vector<std::int32_t>& tokens_bt, int B
       if (cfg_.d_model % cfg_.attn_n_heads != 0) throw std::runtime_error("MHA: d_model must be divisible by n_heads");
       a = nn::variants::mha::self_attention_mha(h, blk.w_qkv, blk.b_qkv, blk.w_proj, blk.b_proj, cfg_.attn_n_heads);
     } else if (cfg_.attn_type == 2) {
-      // GQA — extRact Q,K,V into 4D tensors, call GQA variant, project
+      // GQA — slice K/V to n_kv*hd columns, reshape to 4D, call variant
       int n_heads = cfg_.attn_n_heads;
       int n_kv = (cfg_.attn_n_kv > 0 ? cfg_.attn_n_kv : 1);
       int hd = cfg_.d_model / n_heads;
+      int kv_dim = n_kv * hd;
       if (cfg_.d_model % n_heads != 0) throw std::runtime_error("GQA: d_model must be divisible by n_heads");
       if (n_heads % n_kv != 0) throw std::runtime_error("GQA: n_heads must be divisible by n_kv");
-      // For now, delegate to MHA (same parameter layout, correct output)
-      // Full GQA with separate K/V head counts requires different weight layout
-      a = nn::variants::mha::self_attention_mha(h, blk.w_qkv, blk.b_qkv, blk.w_proj, blk.b_proj, n_heads);
+
+      Tensor qkv = nn::linear_lastdim(h, blk.w_qkv, blk.b_qkv); // [B,T,3C]
+      int B = h.shape[0], T = h.shape[1], C3 = qkv.shape[2];
+      int C = cfg_.d_model;
+
+      // Extract Q (full C cols), K/V (first kv_dim cols each)
+      auto slice = [&](int offset, int len) {
+        nn::Tensor out = nn::Tensor::zeros({B, T, len}, false);
+        for (int i = 0; i < B*T; ++i)
+          for (int j = 0; j < len; ++j)
+            (*out.data)[i*len + j] = (*qkv.data)[i*C3 + offset + j];
+        return out;
+      };
+      Tensor q = slice(0, C);
+      Tensor k = slice(C, kv_dim);
+      Tensor v = slice(2*C, kv_dim);
+
+      nn::Tensor q4 = nn::reshape(q, {B, T, n_heads, hd});
+      nn::Tensor k4 = nn::reshape(k, {B, T, n_kv, hd});
+      nn::Tensor v4 = nn::reshape(v, {B, T, n_kv, hd});
+
+      nn::Tensor a_gqa = nn::variants::gqa::self_attention_gqa(q4, k4, v4, n_heads, n_kv);
+      a = nn::linear_lastdim(a_gqa, blk.w_proj, blk.b_proj);
     } else if (cfg_.attn_type == 3) {
       a = nn::variants::mla::self_attention_mla(h,
            blk.mla_w_q, blk.mla_b_q, blk.mla_w_dkv, blk.mla_b_dkv,
