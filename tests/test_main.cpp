@@ -715,6 +715,46 @@ void test_gradcheck_silu_via_cross_entropy() {
   }
 }
 
+void test_moe_shared_experts_forward() {
+  std::cout << "[RUN ] MoE shared experts forward\n";
+  const int N = 4, C = 8, n_exp = 2, top_k = 1, n_shared = 1, interm = 4*C;
+  util::Rng rng(444);
+  nn::Tensor x = nn::Tensor::zeros({N, C}, false);
+  nn::Tensor wr = nn::Tensor::zeros({C, n_exp}, false);
+  nn::Tensor br = nn::Tensor::zeros({n_exp}, false);
+  for (float& v : *x.data) v = (rng.next_f01() - 0.5f) * 0.2f;
+  for (float& v : *wr.data) v = (rng.next_f01() - 0.5f) * 0.2f;
+
+  std::vector<nn::Tensor> wfc, bfc, wout, bout;
+  std::vector<nn::Tensor> swfc, sbfc, swout, sbout;
+  std::vector<const nn::Tensor*> ptrs, sptrs;
+  wfc.reserve(n_exp); bfc.reserve(n_exp); wout.reserve(n_exp); bout.reserve(n_exp);
+  swfc.reserve(n_shared); sbfc.reserve(n_shared); swout.reserve(n_shared); sbout.reserve(n_shared);
+  for (int e = 0; e < n_exp; ++e) {
+    wfc.push_back(nn::Tensor::randn({C, interm}, 0.1f, 10 + static_cast<std::uint64_t>(rng.next_f01()*100), false));
+    bfc.push_back(nn::Tensor::zeros({interm}, false));
+    wout.push_back(nn::Tensor::randn({interm, C}, 0.1f, 20 + static_cast<std::uint64_t>(rng.next_f01()*100), false));
+    bout.push_back(nn::Tensor::zeros({C}, false));
+    ptrs.push_back(&wfc.back()); ptrs.push_back(&bfc.back());
+    ptrs.push_back(&wout.back()); ptrs.push_back(&bout.back());
+  }
+  for (int e = 0; e < n_shared; ++e) {
+    swfc.push_back(nn::Tensor::randn({C, interm}, 0.1f, 30 + static_cast<std::uint64_t>(rng.next_f01()*100), false));
+    sbfc.push_back(nn::Tensor::zeros({interm}, false));
+    swout.push_back(nn::Tensor::randn({interm, C}, 0.1f, 40 + static_cast<std::uint64_t>(rng.next_f01()*100), false));
+    sbout.push_back(nn::Tensor::zeros({C}, false));
+    sptrs.push_back(&swfc.back()); sptrs.push_back(&sbfc.back());
+    sptrs.push_back(&swout.back()); sptrs.push_back(&sbout.back());
+  }
+
+  auto out = nn::variants::moe::moe_mlp_forward(x, wr, br, ptrs, n_exp, top_k, interm, sptrs);
+  expect_true(out.y.shape == std::vector<int>({N, C}), "MoE shared: output shape [N,C]");
+  bool ok = true;
+  for (float v : *out.y.data) if (!std::isfinite(v)) ok = false;
+  expect_true(ok, "MoE shared: output finite");
+  expect_true((*out.balance_loss.data)[0] >= 0.0f, "MoE shared: balance >= 0");
+}
+
 void test_mla_forward_produces_output() {
   std::cout << "[RUN ] MLA forward produces valid output\n";
   const int B = 2, T = 4, C = 8, L = 4; // L=C/2 = latent dim
@@ -1006,6 +1046,7 @@ int main(int /*argc*/, char** /*argv*/) {
     test_gradcheck_rmsnorm_affine_via_cross_entropy();
     test_gradcheck_silu_via_cross_entropy();
     test_moe_training_loss_decreases();
+    test_moe_shared_experts_forward();
     test_moe_forward_produces_output();
     test_tiny_training_regression_loss_decreases();
     test_mha_matches_1h_when_single_head();
