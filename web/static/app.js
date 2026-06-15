@@ -347,4 +347,24 @@ class WebUI {
   }
 }
 
+// Global helper: switch to a tab and load a code file
+function openInCode(filePath) {
+  document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
+  document.querySelectorAll(".tab-panel").forEach(p => p.classList.remove("active"));
+  const codeTab = document.querySelector('[data-tab="code"]');
+  const codePanel = document.getElementById("tab-code");
+  if (codeTab) codeTab.classList.add("active");
+  if (codePanel) codePanel.classList.add("active");
+  // Also show gear icon
+  const gcode = document.getElementById("settings-gear-code");
+  const gchat = document.getElementById("settings-gear-chat");
+  if (gcode) gcode.style.display = "";
+  if (gchat) gchat.style.display = "none";
+  // Load file
+  if (typeof codeUI !== "undefined" && filePath) {
+    codeUI.loadFile(filePath);
+  }
+}
+window.openInCode = openInCode;
+
 const ui = new WebUI();

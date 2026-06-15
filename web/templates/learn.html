@@ -12,9 +12,9 @@
         <p data-i18n-html="learn.ch1.p3"><strong>BPE tokenizer</strong>: Common character pairs are merged into subword tokens (GPT-2 uses 50,257 tokens). More efficient but more complex.</p>
         <div class="learn-formula" data-i18n-html="learn.ch1.formula"><code>"hello" → [104, 101, 108, 108, 111]</code></div>
         <div class="learn-links">
-          <a href="#" onclick="codeUI.loadFile('src/tokenizer/byte_tokenizer.cpp')">📄 ByteTokenizer</a>
-          <a href="#" onclick="codeUI.loadFile('src/tokenizer/bpe_tokenizer.cpp')">📄 BpeTokenizer</a>
-          <a href="#" onclick="codeUI.loadFile('docs/tokenizer_choice_gpt2_bpe_vs_sentencepiece.md')">📖 为什么 BPE？</a>
+          <a href="#" onclick="openInCode('src/tokenizer/byte_tokenizer.cpp')">📄 ByteTokenizer</a>
+          <a href="#" onclick="openInCode('src/tokenizer/bpe_tokenizer.cpp')">📄 BpeTokenizer</a>
+          <a href="#" onclick="openInCode('docs/tokenizer_choice_gpt2_bpe_vs_sentencepiece.md')">📖 为什么 BPE？</a>
         </div>
       </div>
     </div>
@@ -29,8 +29,8 @@
         <div class="learn-formula" data-i18n-html="learn.ch2.formula"><code>X[b,t] = Wte[tokens[b,t]] + Wpe[t]</code></div>
         <div class="learn-shape" data-i18n="learn.ch2.shape">wte: [V,C] &nbsp; wpe: [T,C] &nbsp; X: [B,T,C]</div>
         <div class="learn-links">
-          <a href="#" onclick="codeUI.loadFile('src/ops.cpp')">📄 embedding()</a>
-          <a href="#" onclick="codeUI.loadFile('src/model.cpp')">📄 add_positional()</a>
+          <a href="#" onclick="openInCode('src/ops.cpp')">📄 embedding()</a>
+          <a href="#" onclick="openInCode('src/model.cpp')">📄 add_positional()</a>
         </div>
       </div>
     </div>
@@ -46,8 +46,8 @@
         <div class="learn-formula" data-i18n-html="learn.ch3.formula"><code>Q,K,V = X·Wqkv + bqkv<br>S[i,j] = Q[i]·K[j]/√C + mask(j>i→-∞)<br>P = softmax(S)<br>Y[i] = Σ_j P[i,j]·V[j]</code></div>
         <div class="learn-shape" data-i18n="learn.ch3.shape">Wqkv: [C,3C] &nbsp; Q/K/V: [B,T,C] &nbsp; Scores: [B,T,T]</div>
         <div class="learn-links">
-          <a href="#" onclick="codeUI.loadFile('src/ops.cpp')">📄 self_attention_1h()</a>
-          <a href="#" onclick="codeUI.loadFile('docs/attention_indexing_trace.md')">📖 Attention trace</a>
+          <a href="#" onclick="openInCode('src/ops.cpp')">📄 self_attention_1h()</a>
+          <a href="#" onclick="openInCode('docs/attention_indexing_trace.md')">📖 Attention trace</a>
         </div>
       </div>
     </div>
@@ -62,8 +62,8 @@
         <p data-i18n-html="learn.ch4.p4"><strong>Concat</strong>: Heads concatenated back to [B,T,C] and projected.</p>
         <div class="learn-formula" data-i18n-html="learn.ch4.formula"><code>C = H×D &nbsp; Q_h,K_h,V_h: [B,T,D]<br>S_h[i,j] = Q_h[i]·K_h[j]/√D + mask<br>Y = concat(Y_0,...,Y_{H-1})·Wproj</code></div>
         <div class="learn-links">
-          <a href="#" onclick="codeUI.loadFile('src/variants/mha/mha_attention.cpp')">📄 self_attention_mha()</a>
-          <a href="#" onclick="codeUI.loadFile('docs/variants/mha/learn_by_hand.md')">📖 Learn by hand</a>
+          <a href="#" onclick="openInCode('src/variants/mha/mha_attention.cpp')">📄 self_attention_mha()</a>
+          <a href="#" onclick="openInCode('docs/variants/mha/learn_by_hand.md')">📖 Learn by hand</a>
         </div>
       </div>
     </div>
@@ -78,8 +78,8 @@
         <p data-i18n-html="learn.ch5.p4"><strong>MoE (Variant)</strong>: Multiple expert FFNs with a router that selects which experts to use per token.</p>
         <div class="learn-formula" data-i18n-html="learn.ch5.formula"><code>GELU: FF = GELU(X·Wfc)·Wout<br>SwiGLU: FF = (SiLU(X·Wgate)⊙(X·Wup))·Wdown</code></div>
         <div class="learn-links">
-          <a href="#" onclick="codeUI.loadFile('src/model.cpp')">📄 forward_logits (MLP section)</a>
-          <a href="#" onclick="codeUI.loadFile('src/variants/moe/moe_mlp.cpp')">📄 MoE MLP</a>
+          <a href="#" onclick="openInCode('src/model.cpp')">📄 forward_logits (MLP section)</a>
+          <a href="#" onclick="openInCode('src/variants/moe/moe_mlp.cpp')">📄 MoE MLP</a>
         </div>
       </div>
     </div>
@@ -94,7 +94,7 @@
         <div class="learn-formula" data-i18n-html="learn.ch6.formula"><code>LayerNorm: y = (x-μ)/σ·γ + β<br>RMSNorm: y = x/rms·γ</code></div>
         <div class="learn-shape" data-i18n="learn.ch6.shape">γ: [C] &nbsp; β: [C] (LN only)</div>
         <div class="learn-links">
-          <a href="#" onclick="codeUI.loadFile('src/ops.cpp')">📄 layernorm_affine() + rmsnorm_affine()</a>
+          <a href="#" onclick="openInCode('src/ops.cpp')">📄 layernorm_affine() + rmsnorm_affine()</a>
         </div>
       </div>
     </div>
@@ -110,9 +110,9 @@
         <p data-i18n-html="learn.ch7.p5"><strong>Optimizer step</strong>: AdamW updates weights: <code>w ← w - lr · m/(√v + ε) - lr·λ·w</code> (with momentum m, velocity v, and weight decay λ).</p>
         <div class="learn-formula" data-i18n-html="learn.ch7.formula"><code>Forward:  X = Embed(tokens) → layers → logits<br>Loss:    CE = -1/N Σ log(p_target)<br>Backward: ∂L/∂w (autograd graph)<br>Update:  w -= lr * AdamW(gradient)</code></div>
         <div class="learn-links">
-          <a href="#" onclick="codeUI.loadFile('src/model.cpp')">📄 forward_logits() + loss()</a>
-          <a href="#" onclick="codeUI.loadFile('src/optim.cpp')">📄 AdamW optimizer</a>
-          <a href="#" onclick="codeUI.loadFile('src/tensor.cpp')">📄 Autograd engine</a>
+          <a href="#" onclick="openInCode('src/model.cpp')">📄 forward_logits() + loss()</a>
+          <a href="#" onclick="openInCode('src/optim.cpp')">📄 AdamW optimizer</a>
+          <a href="#" onclick="openInCode('src/tensor.cpp')">📄 Autograd engine</a>
         </div>
       </div>
     </div>

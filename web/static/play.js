@@ -108,7 +108,9 @@ class PlayUI {
     const container = document.getElementById("play-messages");
     const div = document.createElement("div");
     div.className = "play-message play-" + role;
-    div.innerHTML = `<div class="play-role">${role === "user" ? "🧑 You" : "🤖 Model"}</div><div class="play-text">${content.replace(/&/g,"&amp;").replace(/</g,"&lt;")}</div>`;
+    const roleLabel = role === "user" ? t("play.you") : t("play.ai");
+    const escaped = content.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+    div.innerHTML = `<div class="play-role">${roleLabel}</div><div class="play-text">${escaped}</div>`;
     container.appendChild(div);
     container.scrollTop = container.scrollHeight;
     return div;
