@@ -37,7 +37,7 @@ struct Args {
   std::uint64_t seed = 1;
   std::string norm_type = "layernorm"; // "layernorm" or "rmsnorm"
   std::string mlp_type = "gelu";       // "gelu" or "swiglu" or "moe"
-  std::string attn_type = "1head";     // "1head", "mha", "gqa"
+  std::string attn_type = "1head";     // "1head", "mha", "gqa", "mla"
   std::string pos_type = "wpe";        // "wpe", "rope"
   int attn_n_heads = 1;
   int attn_n_kv = 1;
@@ -836,7 +836,7 @@ int main(int argc, char** argv) {
     cfg.n_layers = args.layers;
     cfg.norm_type = (args.norm_type == "rmsnorm") ? 1 : 0;
     cfg.mlp_type  = (args.mlp_type == "swiglu") ? 1 : ((args.mlp_type == "moe") ? 2 : 0);
-    cfg.attn_type = (args.attn_type == "mha") ? 1 : ((args.attn_type == "gqa") ? 2 : 0);
+    cfg.attn_type = (args.attn_type == "mha") ? 1 : ((args.attn_type == "gqa") ? 2 : ((args.attn_type == "mla") ? 3 : 0));
     cfg.pos_type  = (args.pos_type == "rope") ? 1 : 0;
     cfg.attn_n_heads = args.attn_n_heads > 0 ? args.attn_n_heads : 1;
     cfg.attn_n_kv = args.attn_n_kv > 0 ? args.attn_n_kv : 1;

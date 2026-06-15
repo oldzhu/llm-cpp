@@ -18,10 +18,11 @@ struct Config {
   int swiglu_interm = 0; // intermediate dim for SwiGLU (0 = 3*d_model)
   int n_experts = 4; // number of experts for MoE (mlp_type==2)
   int top_k = 2;     // top-K experts per token for MoE
-  int attn_type = 0; // 0 = 1-head (default), 1 = MHA, 2 = GQA
+  int attn_type = 0; // 0 = 1-head (default), 1 = MHA, 2 = GQA, 3 = MLA
   int pos_type = 0;  // 0 = wpe (default), 1 = RoPE
   int attn_n_heads = 1;  // number of attention heads (for attn_type>=1)
   int attn_n_kv = 1;     // number of KV heads (for attn_type==2, GQA)
+  int mla_latent_dim = 0; // latent dim for MLA (attn_type==3, 0 = C/4)
 };
 
 struct Params {
@@ -88,6 +89,15 @@ class TinyGPT {
     std::vector<nn::Tensor> moe_expert_bfc;
     std::vector<nn::Tensor> moe_expert_wout;
     std::vector<nn::Tensor> moe_expert_bout;
+    // MLA parameters (used when cfg.attn_type == 3)
+    nn::Tensor mla_w_q;   // [C, C]
+    nn::Tensor mla_b_q;   // [C]
+    nn::Tensor mla_w_dkv; // [C, L]
+    nn::Tensor mla_b_dkv; // [L]
+    nn::Tensor mla_w_uk;  // [L, C]
+    nn::Tensor mla_w_uv;  // [L, C]
+    nn::Tensor mla_w_o;   // [C, C]
+    nn::Tensor mla_b_o;   // [C]
   };
 
   std::vector<Block> blocks_;

@@ -86,7 +86,13 @@ add_library(llm_variant_moe
 target_include_directories(llm_variant_moe PUBLIC src)
 target_link_libraries(llm_variant_moe PUBLIC llm_core)
 
-target_link_libraries(train_gpt PRIVATE llm_core llm_variant_kvcache llm_variant_moe llm_variant_mha llm_variant_gqa llm_variant_rope)
+add_library(llm_variant_mla
+  src/variants/mla/mla_attention.cpp
+)
+target_include_directories(llm_variant_mla PUBLIC src)
+target_link_libraries(llm_variant_mla PUBLIC llm_core)
+
+target_link_libraries(train_gpt PRIVATE llm_core llm_variant_kvcache llm_variant_moe llm_variant_mha llm_variant_gqa llm_variant_rope llm_variant_mla)
 
 enable_testing()
 
@@ -94,7 +100,7 @@ add_executable(test_build_llm
   tests/test_main.cpp
 )
 
-target_link_libraries(test_build_llm PRIVATE llm_core llm_variant_mha llm_variant_kvcache llm_variant_rope llm_variant_gqa llm_variant_moe)
+target_link_libraries(test_build_llm PRIVATE llm_core llm_variant_mha llm_variant_kvcache llm_variant_rope llm_variant_gqa llm_variant_moe llm_variant_mla)
 
 add_test(NAME build_llm_tests COMMAND test_build_llm WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 
@@ -105,6 +111,7 @@ if (MSVC)
   target_compile_options(llm_variant_rope PRIVATE /W4 /permissive-)
   target_compile_options(llm_variant_gqa PRIVATE /W4 /permissive-)
   target_compile_options(llm_variant_moe PRIVATE /W4 /permissive-)
+  target_compile_options(llm_variant_mla PRIVATE /W4 /permissive-)
   target_compile_options(train_gpt PRIVATE /W4 /permissive-)
   target_compile_options(test_build_llm PRIVATE /W4 /permissive-)
 else()
@@ -114,6 +121,7 @@ else()
   target_compile_options(llm_variant_rope PRIVATE -Wall -Wextra -Wpedantic)
   target_compile_options(llm_variant_gqa PRIVATE -Wall -Wextra -Wpedantic)
   target_compile_options(llm_variant_moe PRIVATE -Wall -Wextra -Wpedantic)
+  target_compile_options(llm_variant_mla PRIVATE -Wall -Wextra -Wpedantic)
   target_compile_options(train_gpt PRIVATE -Wall -Wextra -Wpedantic)
   target_compile_options(test_build_llm PRIVATE -Wall -Wextra -Wpedantic)
 endif()

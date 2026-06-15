@@ -19,6 +19,7 @@
 #include "variants/kvcache/kvcache_attention.h"
 #include "variants/rope/rope_attention.h"
 #include "variants/gqa/gqa_attention.h"
+#include "variants/mla/mla_attention.h"
 #include "variants/moe/moe_mlp.h"
 #include "tokenizer/byte_tokenizer.h"
 #include "tokenizer/bpe_tokenizer.h"
@@ -714,6 +715,27 @@ void test_gradcheck_silu_via_cross_entropy() {
   }
 }
 
+void test_mla_forward_produces_output() {
+  std::cout << "[RUN ] MLA forward produces valid output\n";
+  const int B = 2, T = 4, C = 8, L = 4; // L=C/2 = latent dim
+  util::Rng rng(555);
+  auto fill = [&](nn::Tensor& t, float s) { for(float& v:*t.data) v=(rng.next_f01()-0.5f)*s; };
+  nn::Tensor x = nn::Tensor::zeros({B,T,C}, false); fill(x, 0.2f);
+  nn::Tensor w_q = nn::Tensor::zeros({C,C}, false); fill(w_q, 0.2f);
+  nn::Tensor b_q = nn::Tensor::zeros({C}, false);
+  nn::Tensor w_dkv = nn::Tensor::zeros({C,L}, false); fill(w_dkv, 0.2f);
+  nn::Tensor b_dkv = nn::Tensor::zeros({L}, false);
+  nn::Tensor w_uk = nn::Tensor::zeros({L,C}, false); fill(w_uk, 0.1f);
+  nn::Tensor w_uv = nn::Tensor::zeros({L,C}, false); fill(w_uv, 0.1f);
+  nn::Tensor w_o = nn::Tensor::zeros({C,C}, false); fill(w_o, 0.2f);
+  nn::Tensor b_o = nn::Tensor::zeros({C}, false);
+
+  nn::Tensor y = nn::variants::mla::self_attention_mla(x, w_q, b_q, w_dkv, b_dkv, w_uk, w_uv, w_o, b_o);
+  expect_true(y.shape == std::vector<int>({B,T,C}), "MLA: output shape [B,T,C]");
+  bool ok=true; for(float v:*y.data) if(!std::isfinite(v)) ok=false;
+  expect_true(ok, "MLA: output finite");
+}
+
 void test_gqa_matches_mha_when_same_heads() {
   std::cout << "[RUN ] GQA matches MHA when n_kv_heads == n_heads\n";
   const int B = 2;
@@ -994,6 +1016,7 @@ int main(int /*argc*/, char** /*argv*/) {
     test_rope_position_zero_is_identity();
     test_rope_attention_runs();
     test_gqa_matches_mha_when_same_heads();
+    test_mla_forward_produces_output();
     test_blocked_simd_matches_cpu_matmul();
     test_simd_backend_via_model_training();
     test_vulkan_matches_cpu_matmul();

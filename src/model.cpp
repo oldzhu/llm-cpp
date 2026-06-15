@@ -8,6 +8,7 @@
 #include "variants/mha/mha_attention.h"
 #include "variants/gqa/gqa_attention.h"
 #include "variants/rope/rope_attention.h"
+#include "variants/mla/mla_attention.h"
 
 namespace model {
 
@@ -75,6 +76,17 @@ TinyGPT::TinyGPT(const Config& cfg, std::uint64_t seed) : cfg_(cfg) {
       blk.moe_expert_wout[static_cast<std::size_t>(e)] = Tensor::randn({4 * C, C}, init_std(4 * C), s ^ (9 + e * 4 + 1), true);
       blk.moe_expert_bout[static_cast<std::size_t>(e)] = Tensor::zeros({C}, true);
     }
+
+    // MLA params
+    const int mla_L = (cfg_.mla_latent_dim > 0) ? cfg_.mla_latent_dim : (C / 4);
+    blk.mla_w_q   = Tensor::randn({C, C}, init_std(C), s ^ 10, true);
+    blk.mla_b_q   = Tensor::zeros({C}, true);
+    blk.mla_w_dkv = Tensor::randn({C, mla_L}, init_std(C), s ^ 11, true);
+    blk.mla_b_dkv = Tensor::zeros({mla_L}, true);
+    blk.mla_w_uk  = Tensor::randn({mla_L, C}, init_std(mla_L), s ^ 12, true);
+    blk.mla_w_uv  = Tensor::randn({mla_L, C}, init_std(mla_L), s ^ 13, true);
+    blk.mla_w_o   = Tensor::randn({C, C}, init_std(C), s ^ 14, true);
+    blk.mla_b_o   = Tensor::zeros({C}, true);
 
     blocks_[static_cast<std::size_t>(i)] = std::move(blk);
   }
@@ -181,6 +193,10 @@ Tensor TinyGPT::forward_logits(const std::vector<std::int32_t>& tokens_bt, int B
       // For now, delegate to MHA (same parameter layout, correct output)
       // Full GQA with separate K/V head counts requires different weight layout
       a = nn::variants::mha::self_attention_mha(h, blk.w_qkv, blk.b_qkv, blk.w_proj, blk.b_proj, n_heads);
+    } else if (cfg_.attn_type == 3) {
+      a = nn::variants::mla::self_attention_mla(h,
+           blk.mla_w_q, blk.mla_b_q, blk.mla_w_dkv, blk.mla_b_dkv,
+           blk.mla_w_uk, blk.mla_w_uv, blk.mla_w_o, blk.mla_b_o);
     }
     x = nn::add(x, a);
 
@@ -269,6 +285,10 @@ void TinyGPT::zero_grad() {
     blk.swiglu_up_b.zero_grad();
     blk.swiglu_down.zero_grad();
     blk.swiglu_down_b.zero_grad();
+    blk.mla_w_q.zero_grad(); blk.mla_b_q.zero_grad();
+    blk.mla_w_dkv.zero_grad(); blk.mla_b_dkv.zero_grad();
+    blk.mla_w_uk.zero_grad(); blk.mla_w_uv.zero_grad();
+    blk.mla_w_o.zero_grad(); blk.mla_b_o.zero_grad();
     blk.moe_router_w.zero_grad();
     blk.moe_router_b.zero_grad();
     for (auto& t : blk.moe_expert_wfc)  t.zero_grad();
@@ -313,6 +333,12 @@ Params TinyGPT::parameters() {
     p.tensors.push_back(&blk.swiglu_down_b);
   }
   for (auto& blk : blocks_) {
+    p.tensors.push_back(&blk.mla_w_q); p.tensors.push_back(&blk.mla_b_q);
+    p.tensors.push_back(&blk.mla_w_dkv); p.tensors.push_back(&blk.mla_b_dkv);
+    p.tensors.push_back(&blk.mla_w_uk); p.tensors.push_back(&blk.mla_w_uv);
+    p.tensors.push_back(&blk.mla_w_o); p.tensors.push_back(&blk.mla_b_o);
+  }
+  for (auto& blk : blocks_) {
     p.tensors.push_back(&blk.moe_router_w);
     p.tensors.push_back(&blk.moe_router_b);
     for (auto& t : blk.moe_expert_wfc)  p.tensors.push_back(&t);
@@ -352,6 +378,12 @@ ParamsConst TinyGPT::parameters_const() const {
     p.tensors.push_back(&blk.swiglu_up_b);
     p.tensors.push_back(&blk.swiglu_down);
     p.tensors.push_back(&blk.swiglu_down_b);
+  }
+  for (const auto& blk : blocks_) {
+    p.tensors.push_back(&blk.mla_w_q); p.tensors.push_back(&blk.mla_b_q);
+    p.tensors.push_back(&blk.mla_w_dkv); p.tensors.push_back(&blk.mla_b_dkv);
+    p.tensors.push_back(&blk.mla_w_uk); p.tensors.push_back(&blk.mla_w_uv);
+    p.tensors.push_back(&blk.mla_w_o); p.tensors.push_back(&blk.mla_b_o);
   }
   for (const auto& blk : blocks_) {
     p.tensors.push_back(&blk.moe_router_w);
