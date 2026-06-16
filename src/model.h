@@ -26,6 +26,7 @@ struct Config {
   int mla_latent_dim = 0; // latent dim for MLA (attn_type==3, 0 = C/4)
   int qk_norm = 0; // 0 = no QK norm, 1 = apply RMSNorm to Q and K before attention
   int swin_win = 0; // sliding window size (0 = disabled, e.g. 4096 for Mistral-style)
+  int n_mtp = 1;    // number of MTP heads (1 = standard next-token, >1 = multi-token prediction)
 };
 
 struct Params {
@@ -120,6 +121,11 @@ class TinyGPT {
   // Final LM head
   nn::Tensor w_lm_; // [C,V]
   nn::Tensor b_lm_; // [V]
+
+  // MTP heads (extra LM heads for multi-token prediction)
+  std::vector<nn::Tensor> mtp_w_lm_; // n_mtp-1 heads, each [C,V]
+  std::vector<nn::Tensor> mtp_b_lm_; // n_mtp-1 heads, each [V]
+  nn::Tensor cached_hidden_; // cached pre-LN hidden state for MTP loss
 
   nn::Tensor add_positional(const nn::Tensor& x, int B, int T);
 };

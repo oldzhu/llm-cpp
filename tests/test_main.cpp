@@ -755,6 +755,40 @@ void test_moe_shared_experts_forward() {
   expect_true((*out.balance_loss.data)[0] >= 0.0f, "MoE shared: balance >= 0");
 }
 
+void test_mtp_forward_and_loss() {
+  std::cout << "[RUN ] MTP multi-token prediction forward and loss\n";
+  try {
+  const int n_mtp = 2; // simpler — one extra head
+  std::vector<std::uint8_t> bytes(2048);
+  for (std::size_t i = 0; i < bytes.size(); ++i) bytes[i] = static_cast<std::uint8_t>(i & 0xFF);
+  data::ByteDataset ds(std::move(bytes));
+
+  model::Config cfg;
+  cfg.vocab_size = 256; cfg.seq_len = 16; cfg.d_model = 16; cfg.n_layers = 1;
+  cfg.n_mtp = n_mtp;
+
+  model::TinyGPT gpt(cfg, 77);
+  optim::AdamWConfig ocfg; ocfg.lr = 1e-3f; ocfg.weight_decay = 0.01f;
+  optim::AdamW opt(ocfg);
+  util::Rng rng(77 ^ 0xDEADBEEF);
+
+  float l0 = 0.0f, lN = 0.0f;
+  for (int step = 0; step < 20; ++step) {
+    data::Batch batch = ds.sample_batch(2, 16, rng);
+    gpt.zero_grad();
+    nn::Tensor loss = gpt.loss(batch.x, batch.y, batch.B, batch.T);
+    loss.backward();
+    opt.step(gpt.parameters().tensors);
+    if (step == 0) l0 = (*loss.data)[0];
+    if (step == 19) lN = (*loss.data)[0];
+  }
+  expect_true(lN < l0, "MTP: training loss decreases with n_mtp=" + std::to_string(n_mtp));
+  } catch (const std::exception& e) {
+    std::cerr << "[FAIL] MTP: " << e.what() << "\n";
+    ++g_failures;
+  }
+}
+
 void test_mla_forward_produces_output() {
   std::cout << "[RUN ] MLA forward produces valid output\n";
   const int B = 2, T = 4, C = 8, L = 4; // L=C/2 = latent dim
@@ -1058,6 +1092,7 @@ int main(int /*argc*/, char** /*argv*/) {
     test_rope_attention_runs();
     test_gqa_matches_mha_when_same_heads();
     test_mla_forward_produces_output();
+    test_mtp_forward_and_loss();
     test_blocked_simd_matches_cpu_matmul();
     test_simd_backend_via_model_training();
     test_vulkan_matches_cpu_matmul();

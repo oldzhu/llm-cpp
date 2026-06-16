@@ -101,6 +101,12 @@ TinyGPT::TinyGPT(const Config& cfg, std::uint64_t seed) : cfg_(cfg) {
   w_lm_ = Tensor::randn({C, V}, init_std(C), seed ^ 0xC0FFEEULL, true);
   b_lm_ = Tensor::zeros({V}, true);
 
+  // MTP heads
+  for (int m = 1; m < cfg_.n_mtp; ++m) {
+    mtp_w_lm_.push_back(Tensor::randn({C, V}, init_std(C), seed ^ (0xD000ULL + static_cast<std::uint64_t>(m)), true));
+    mtp_b_lm_.push_back(Tensor::zeros({V}, true));
+  }
+
   ln_final_gamma_ = Tensor::zeros({C}, true);
   ln_final_beta_  = Tensor::zeros({C}, true);
   for (int ci = 0; ci < C; ++ci) {
@@ -274,6 +280,12 @@ Tensor TinyGPT::forward_logits(const std::vector<std::int32_t>& tokens_bt, int B
   }
 
   // Final norm + LM head:
+  // Deep-copy hidden state for MTP heads (avoids shared_ptr aliasing issues)
+  {
+    cached_hidden_ = nn::Tensor::zeros(x.shape, false);
+    std::size_t n = x.numel();
+    for (std::size_t i = 0; i < n; ++i) (*cached_hidden_.data)[i] = (*x.data)[i];
+  }
   Tensor xn;
   if (cfg_.norm_type == 0)
     xn = nn::layernorm_affine(x, ln_final_gamma_, ln_final_beta_, 1e-5f);
@@ -290,8 +302,26 @@ Tensor TinyGPT::loss(const std::vector<std::int32_t>& tokens_bt,
   Tensor logits = forward_logits(tokens_bt, B, T);
   Tensor logits2 = nn::reshape(logits, {B * T, cfg_.vocab_size});
   Tensor ce_loss = nn::cross_entropy(logits2, targets_bt);
+
+  // MTP: extra losses from additional prediction heads
+  for (int m = 1; m < cfg_.n_mtp; ++m) {
+    // Use raw matmul2d instead of linear_lastdim to avoid reshape chain issues
+    if (cached_hidden_.shape.size() < 2) throw std::runtime_error("MTP: bad cached_hidden_ shape");
+    int N = cached_hidden_.shape[0] * cached_hidden_.shape[1];
+    int C = cfg_.d_model;
+    int V = cfg_.vocab_size;
+    Tensor x2 = nn::reshape(cached_hidden_, {N, C});
+    Tensor el = nn::matmul2d(x2, mtp_w_lm_[static_cast<std::size_t>(m-1)]); // [N,V]
+    // Add bias manually
+    Tensor el_bias = Tensor::zeros({N, V}, false);
+    for (int n = 0; n < N; ++n)
+      for (int v = 0; v < V; ++v)
+        (*el_bias.data)[static_cast<std::size_t>(n)*V+v] = (*el.data)[static_cast<std::size_t>(n)*V+v] + (*mtp_b_lm_[static_cast<std::size_t>(m-1)].data)[v];
+    Tensor extra_loss = nn::cross_entropy(el_bias, targets_bt);
+    ce_loss = nn::add(ce_loss, extra_loss);
+  }
+
   if (cfg_.mlp_type == 2 && moe_balance_loss_ > 0.0f) {
-    // Add auxiliary MoE load balancing loss (scaled)
     nn::Tensor total = nn::add_scalar(ce_loss, moe_balance_loss_ * 0.01f);
     return total;
   }
@@ -335,6 +365,8 @@ void TinyGPT::zero_grad() {
   b_lm_.zero_grad();
   ln_final_gamma_.zero_grad();
   ln_final_beta_.zero_grad();
+  for (auto& t : mtp_w_lm_) t.zero_grad();
+  for (auto& t : mtp_b_lm_) t.zero_grad();
 }
 
 Params TinyGPT::parameters() {
@@ -359,6 +391,8 @@ Params TinyGPT::parameters() {
   p.tensors.push_back(&b_lm_);
   p.tensors.push_back(&ln_final_gamma_);
   p.tensors.push_back(&ln_final_beta_);
+  for (auto& t : mtp_w_lm_) p.tensors.push_back(&t);
+  for (auto& t : mtp_b_lm_) p.tensors.push_back(&t);
   for (auto& blk : blocks_) {
     p.tensors.push_back(&blk.swiglu_gate);
     p.tensors.push_back(&blk.swiglu_gate_b);
@@ -406,6 +440,8 @@ ParamsConst TinyGPT::parameters_const() const {
   p.tensors.push_back(&b_lm_);
   p.tensors.push_back(&ln_final_gamma_);
   p.tensors.push_back(&ln_final_beta_);
+  for (auto& t : mtp_w_lm_) p.tensors.push_back(&t);
+  for (auto& t : mtp_b_lm_) p.tensors.push_back(&t);
   for (const auto& blk : blocks_) {
     p.tensors.push_back(&blk.swiglu_gate);
     p.tensors.push_back(&blk.swiglu_gate_b);
