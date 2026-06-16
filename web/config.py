@@ -4,7 +4,7 @@ from typing import Any
 
 CONFIG = {
     "data_path":  {"type":"path","default":"data/alice.txt","label":"Training Data","group":"Data"},
-    "tokenizer":  {"type":"choice","options":["byte","bpe"],"default":"byte","label":"Tokenizer","group":"Data"},
+    "tokenizer":  {"type":"choice","options":["byte","bpe","sp"],"default":"byte","label":"Tokenizer","group":"Data"},
     "bpe_vocab":  {"type":"path","default":"data/bpe_vocab.json","label":"BPE Vocab File","group":"Data","show_if":{"tokenizer":"bpe"}},
     "bpe_merges": {"type":"path","default":"data/bpe_merges.txt","label":"BPE Merges File","group":"Data","show_if":{"tokenizer":"bpe"}},
     "token_data": {"type":"path","default":"","label":"Token Data (.bin)","group":"Data","show_if":{"tokenizer":"bpe"}},

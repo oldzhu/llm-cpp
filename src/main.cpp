@@ -20,11 +20,12 @@
 
 #include "tokenizer/byte_tokenizer.h"
 #include "tokenizer/bpe_tokenizer.h"
+#include "tokenizer/spm_tokenizer.h"
 #include "variants/kvcache/kvcache_attention.h"
 
 struct Args {
     // Tokenizer
-    std::string tokenizer_type = "byte"; // "byte" or "bpe"
+    std::string tokenizer_type = "byte"; // "byte" or "bpe" or "sp" (SentencePiece)
     std::string bpe_vocab_path;
     std::string bpe_merges_path;
   std::string data_path;
@@ -778,6 +779,9 @@ int main(int argc, char** argv) {
         throw std::runtime_error("BPE tokenizer requires --bpe-vocab and --bpe-merges");
       }
       tokenizer = std::make_unique<BpeTokenizer>(args.bpe_vocab_path, args.bpe_merges_path);
+    } else if (args.tokenizer_type == "sp") {
+      if (args.bpe_vocab_path.empty()) throw std::runtime_error("SPM tokenizer requires --bpe-vocab (JSON vocab)");
+      tokenizer = std::make_unique<SpmTokenizer>(args.bpe_vocab_path);
     } else {
       throw std::runtime_error("Unknown --tokenizer type: " + args.tokenizer_type);
     }

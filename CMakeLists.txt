@@ -21,6 +21,7 @@ add_library(llm_core
 
   src/tokenizer/byte_tokenizer.cpp
   src/tokenizer/bpe_tokenizer.cpp
+  src/tokenizer/spm_tokenizer.cpp
 )
 
 if (BUILD_VULKAN)

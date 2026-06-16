@@ -1,6 +1,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
+#include <fstream>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -24,6 +25,7 @@
 #include "variants/moe/moe_mlp.h"
 #include "tokenizer/byte_tokenizer.h"
 #include "tokenizer/bpe_tokenizer.h"
+#include "tokenizer/spm_tokenizer.h"
 
 namespace {
 
@@ -716,6 +718,39 @@ void test_gradcheck_silu_via_cross_entropy() {
   }
 }
 
+void test_spm_tokenizer_encode_decode() {
+  std::cout << "[RUN ] SentencePiece tokenizer encode/decode roundtrip\n";
+  // Extract vocab from TinyLlama model first
+  std::string spm_model = "data/TinyLlama-1.1B/tokenizer.model";
+  std::string spm_vocab = "data/spm_vocab.json";
+  // If vocab file doesn't exist, skip
+  std::ifstream test_v(spm_vocab);
+  if (!test_v) {
+    std::cout << "[SKIP] SPM vocab not extracted — run: python scripts/extract_spm_vocab.py\n";
+    return;
+  }
+  test_v.close();
+
+  SpmTokenizer tok(spm_vocab);
+  expect_true(tok.vocab_size() > 1000, "SPM: vocab_size > 1000");
+
+  // Test roundtrip
+  std::string s1 = "Hello world!";
+  auto t1 = tok.encode(s1);
+  std::string d1 = tok.decode(t1);
+  expect_true(d1 == s1, "SPM: ASCII roundtrip");
+
+  // UTF-8
+  std::string s2 = "你好世界";
+  auto t2 = tok.encode(s2);
+  std::string d2 = tok.decode(t2);
+  expect_true(d2 == s2, "SPM: UTF-8 roundtrip");
+
+  // Empty
+  auto t3 = tok.encode("");
+  expect_true(tok.decode(t3).empty(), "SPM: empty roundtrip");
+}
+
 void test_moe_shared_experts_forward() {
   std::cout << "[RUN ] MoE shared experts forward\n";
   const int N = 4, C = 8, n_exp = 2, top_k = 1, n_shared = 1, interm = 4*C;
@@ -1119,6 +1154,7 @@ int main(int /*argc*/, char** /*argv*/) {
     test_mha_matches_1h_when_single_head();
     test_byte_tokenizer_encode_decode();
     test_bpe_tokenizer_encode_decode();
+    test_spm_tokenizer_encode_decode();
     test_byte_tokenizer_embedding_shape();
     test_kvcache_matches_full_attention();
     test_rope_position_zero_is_identity();
