@@ -190,8 +190,12 @@ Tensor TinyGPT::forward_logits(const std::vector<std::int32_t>& tokens_bt, int B
       // 1-head + RoPE: use RoPE variant (applies rotation, no wpe needed)
       a = nn::variants::rope::self_attention_rope(h, blk.w_qkv, blk.b_qkv, blk.w_proj, blk.b_proj);
     } else if (cfg_.attn_type == 0) {
-      // 1-head attention (default)
-      a = nn::self_attention_1h(h, blk.w_qkv, blk.b_qkv, blk.w_proj, blk.b_proj);
+      // 1-head attention (default). Use extended version if QK-Norm/SW/ALiBi enabled.
+      if (cfg_.qk_norm || cfg_.swin_win > 0 || cfg_.pos_type == 2)
+        a = nn::self_attention_1h_ext(h, blk.w_qkv, blk.b_qkv, blk.w_proj, blk.b_proj,
+                                       cfg_.qk_norm, cfg_.swin_win, cfg_.pos_type);
+      else
+        a = nn::self_attention_1h(h, blk.w_qkv, blk.b_qkv, blk.w_proj, blk.b_proj);
     } else if (cfg_.attn_type == 1) {
       // Multi-head attention
       if (cfg_.d_model % cfg_.attn_n_heads != 0) throw std::runtime_error("MHA: d_model must be divisible by n_heads");

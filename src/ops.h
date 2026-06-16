@@ -49,6 +49,16 @@ Tensor self_attention_1h(const Tensor& x,
                          const Tensor& w_proj,
                          const Tensor& b_proj);
 
+// Extended 1-head with QK-Norm, Sliding Window, ALiBi
+Tensor self_attention_1h_ext(const Tensor& x,
+                              const Tensor& w_qkv,
+                              const Tensor& b_qkv,
+                              const Tensor& w_proj,
+                              const Tensor& b_proj,
+                              int qk_norm,
+                              int swin_win,
+                              int pos_type);
+
 // Linear on last dim for [B,T,Cin] with weight [Cin,Cout], bias [Cout].
 Tensor linear_lastdim(const Tensor& x, const Tensor& w, const Tensor& b);
 

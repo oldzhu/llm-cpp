@@ -889,6 +889,91 @@ Tensor self_attention_1h(const Tensor& x,
   return proj;
 }
 
+Tensor self_attention_1h_ext(const Tensor& x,
+                              const Tensor& w_qkv,
+                              const Tensor& b_qkv,
+                              const Tensor& w_proj,
+                              const Tensor& b_proj,
+                              int qk_norm,
+                              int swin_win,
+                              int pos_type) {
+  // Extended 1-head attention with QK-Norm, Sliding Window, and ALiBi.
+  if (x.shape.size() != 3) throw std::runtime_error("attn_ext: x must be [B,T,C]");
+  const int B = x.shape[0], T = x.shape[1], C = x.shape[2];
+
+  Tensor qkv = linear_lastdim(x, w_qkv, b_qkv); // [B,T,3C]
+  // Manual Q/K/V extraction to apply QK-Norm
+  Tensor q = Tensor::zeros({B, T, C}, false);
+  Tensor k = Tensor::zeros({B, T, C}, false);
+  Tensor v = Tensor::zeros({B, T, C}, false);
+  for (int i = 0; i < B*T*C; ++i) {
+    (*q.data)[i] = (*qkv.data)[i];
+    (*k.data)[i] = (*qkv.data)[B*T*C + i];
+    (*v.data)[i] = (*qkv.data)[2*B*T*C + i];
+  }
+
+  // QK-Norm: apply RMSNorm to Q and K
+  if (qk_norm) {
+    auto rms_norm = [](Tensor& t, int B, int T, int C) {
+      for (int b = 0; b < B; ++b) {
+        for (int tim = 0; tim < T; ++tim) {
+          float sq = 0.0f;
+          std::size_t base = (static_cast<std::size_t>(b)*T + tim)*C;
+          for (int c = 0; c < C; ++c) sq += (*t.data)[base+c] * (*t.data)[base+c];
+          float inv = 1.0f / std::sqrt(sq/static_cast<float>(C) + 1e-5f);
+          for (int c = 0; c < C; ++c) (*t.data)[base+c] *= inv;
+        }
+      }
+    };
+    rms_norm(q, B, T, C);
+    rms_norm(k, B, T, C);
+  }
+
+  // Scores with ALiBi or sliding window
+  Tensor scores = Tensor::zeros({B, T, T}, false);
+  const float scale = 1.0f / std::sqrt(static_cast<float>(C));
+  // ALiBi slopes per head: set to 1/2^(8*h/H) style. For 1-head, use 0.5.
+  float alibi_slope = (pos_type == 2) ? 0.5f : 0.0f;
+  int win = (swin_win > 0) ? swin_win : T;
+
+  for (int bb = 0; bb < B; ++bb) {
+    for (int i = 0; i < T; ++i) {
+      for (int j = 0; j < T; ++j) {
+        float s = 0.0f;
+        std::size_t qi = (static_cast<std::size_t>(bb)*T + i)*C;
+        std::size_t kj = (static_cast<std::size_t>(bb)*T + j)*C;
+        for (int c = 0; c < C; ++c) s += (*q.data)[qi+c] * (*k.data)[kj+c];
+        s *= scale;
+        if (pos_type == 2) {
+          // ALiBi: linear bias, replace causal mask
+          s -= alibi_slope * std::abs(static_cast<float>(i - j));
+        } else if (j > i || (swin_win > 0 && j < i - win)) {
+          s = -1e9f; // causal mask + sliding window
+        }
+        (*scores.data)[(static_cast<std::size_t>(bb)*T + i)*T + j] = s;
+      }
+    }
+  }
+
+  Tensor probs = softmax_lastdim(scores); // [B,T,T]
+  Tensor att = Tensor::zeros({B, T, C}, false);
+  for (int bb = 0; bb < B; ++bb) {
+    for (int i = 0; i < T; ++i) {
+      for (int c = 0; c < C; ++c) {
+        float sum = 0.0f;
+        for (int j = 0; j < T; ++j) {
+          float p = (*probs.data)[(static_cast<std::size_t>(bb)*T + i)*T + j];
+          sum += p * (*v.data)[(static_cast<std::size_t>(bb)*T + j)*C + c];
+        }
+        (*att.data)[(static_cast<std::size_t>(bb)*T + i)*C + c] = sum;
+      }
+    }
+  }
+
+  Tensor proj = linear_lastdim(att, w_proj, b_proj);
+  return proj;
+}
+
 Tensor cross_entropy(const Tensor& logits_nv, const std::vector<std::int32_t>& targets_n) {
   // Mean cross-entropy loss for a batch of logits.
   // logits: [N,V], targets: [N]

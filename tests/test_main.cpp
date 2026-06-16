@@ -20,6 +20,7 @@
 #include "variants/rope/rope_attention.h"
 #include "variants/gqa/gqa_attention.h"
 #include "variants/mla/mla_attention.h"
+#include "variants/ppo/ppo_trainer.h"
 #include "variants/moe/moe_mlp.h"
 #include "tokenizer/byte_tokenizer.h"
 #include "tokenizer/bpe_tokenizer.h"
@@ -765,26 +766,26 @@ void test_ppo_value_head_and_advantage() {
   // Value head: [C, 1]
   nn::Tensor vw = nn::Tensor::randn({C, 1}, 0.1f, 100 + static_cast<std::uint64_t>(rng.next_f01()*100), true);
   nn::Tensor vb = nn::Tensor::zeros({1}, true);
-  // Compute values
-  nn::Tensor values = nn::matmul2d(hidden, vw); // [N, 1]
+  // Compute values via ppo_trainer
+  nn::Tensor values = nn::variants::ppo::value_forward(hidden, vw, vb);
+  expect_true(values.shape == std::vector<int>({N}), "PPO: values shape [N]");
   for (int n = 0; n < N; ++n)
-    (*values.data)[n] += (*vb.data)[0];
-  // Mock rewards and GAE
+    expect_true(std::isfinite((*values.data)[n]), "PPO: value[" + std::to_string(n) + "] finite");
+
+  // Test GAE
   std::vector<float> rewards = {0.5f, -0.2f, 0.1f, 0.8f};
-  float gamma = 0.99f, lambda = 0.95f;
-  // Simple advantage: reward - value
-  bool all_finite = true;
-  for (int n = 0; n < N; ++n) {
-    float adv = rewards[n] - (*values.data)[n];
-    if (!std::isfinite(adv)) all_finite = false;
-  }
-  expect_true(all_finite, "PPO: advantages are finite");
-  // Verify clipped surrogate formula produces valid output
-  float clip_eps = 0.2f;
-  float ratio = 1.0f; // π_new/π_old = 1 (first step)
-  float advantage = 0.3f;
-  float clipped = std::min(ratio * advantage, std::max(std::min(ratio, 1.0f+clip_eps), 1.0f-clip_eps) * advantage);
-  expect_true(std::isfinite(clipped), "PPO: clipped loss is finite");
+  std::vector<float> vals_vec(N);
+  for (int n = 0; n < N; ++n) vals_vec[n] = (*values.data)[n];
+  auto advantages = nn::variants::ppo::compute_gae(rewards, vals_vec, 0.99f, 0.95f);
+  expect_true(advantages.size() == 4, "PPO: GAE returns 4 advantages");
+  for (std::size_t i = 0; i < advantages.size(); ++i)
+    expect_true(std::isfinite(advantages[i]), "PPO: advantage[" + std::to_string(i) + "] finite");
+
+  // Test clipped surrogate
+  float loss = nn::variants::ppo::clip_surrogate_loss(-0.5f, -0.5f, 0.3f, 0.2f);
+  expect_true(std::isfinite(loss), "PPO: clipped surrogate loss finite");
+  // Same probabilities should give ratio=1 → loss = -advantage
+  expect_near(loss, -0.3f, 0.01f, "PPO: loss ≈ -advantage when ratio=1");
 }
 
 void test_mtp_forward_and_loss() {
