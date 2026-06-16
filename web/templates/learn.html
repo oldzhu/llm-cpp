@@ -118,6 +118,69 @@
     </div>
   </div>
 
+    <div class="learn-card">
+      <div class="learn-num">8</div>
+      <div class="learn-body">
+        <h3>MLA — Multi-Head Latent Attention</h3>
+        <p>DeepSeek V2/V3 uses <strong>compressed KV representations</strong>. Instead of storing full K and V matrices (costly for KV-cache), it compresses them into a low-dimensional latent vector <code>c_KV</code>, then decompresses on-the-fly for attention.</p>
+        <p><strong>Compress</strong>: <code>c_KV = X·W_dkv</code> → [B, T, L] (L &lt;&lt; C)</p>
+        <p><strong>Decompress</strong>: <code>K = c_KV·W_uk</code>, <code>V = c_KV·W_uv</code></p>
+        <p>This reduces KV-cache by C/L (e.g., 4×-16× compression).</p>
+        <div class="learn-links">
+          <a href="#" onclick="openInCode('src/variants/mla/mla_attention.cpp')">📄 mla_attention.cpp</a>
+        </div>
+      </div>
+    </div>
+
+    <div class="learn-card">
+      <div class="learn-num">9</div>
+      <div class="learn-body">
+        <h3>GQA — Grouped Query Attention</h3>
+        <p>Standard MHA has equal numbers of Q and K/V heads. GQA uses <strong>fewer K/V heads</strong> — multiple Q heads share the same K/V head. This reduces KV-cache size by <code>n_heads / n_kv_heads</code>.</p>
+        <p>Used in LLaMA 2/3, Mistral, and most modern LLMs.</p>
+        <div class="learn-links">
+          <a href="#" onclick="openInCode('src/variants/gqa/gqa_attention.cpp')">📄 gqa_attention.cpp</a>
+        </div>
+      </div>
+    </div>
+
+    <div class="learn-card">
+      <div class="learn-num">10</div>
+      <div class="learn-body">
+        <h3>MTP — Multi-Token Prediction</h3>
+        <p>Instead of predicting only the next token, MTP uses <strong>multiple independent LM heads</strong> to predict tokens at offsets 1, 2, ..., N. This provides denser training signal.</p>
+        <div class="learn-formula"><code>Loss = Σ_m CE(logits_m, target[m])  for m = 1..N</code></div>
+        <div class="learn-links">
+          <a href="#" onclick="openInCode('src/model.cpp')">📄 model.cpp (MTP section)</a>
+        </div>
+      </div>
+    </div>
+
+    <div class="learn-card">
+      <div class="learn-num">11</div>
+      <div class="learn-body">
+        <h3>Shared MoE Experts</h3>
+        <p>In MoE, all experts are <strong>routed</strong> (only top-K active per token). Shared experts are <strong>always active</strong> for every token, providing a stable knowledge base. Used in DeepSeekMoE.</p>
+        <div class="learn-formula"><code>y = Σ_s Shared_s(x)/n_shared + Σ_e gate[e]·Routed_e(x)</code></div>
+        <div class="learn-links">
+          <a href="#" onclick="openInCode('src/variants/moe/moe_mlp.cpp')">📄 moe_mlp.cpp</a>
+        </div>
+      </div>
+    </div>
+
+    <div class="learn-card">
+      <div class="learn-num">12</div>
+      <div class="learn-body">
+        <h3>SentencePiece Tokenizer</h3>
+        <p>Unlike byte-level (256 tokens) or BPE (50K tokens), SentencePiece uses a <strong>unigram language model</strong> for subword segmentation. Used by LLaMA, T5, and most multilingual models.</p>
+        <p>Supports all languages natively, no pre-tokenization needed for CJK text.</p>
+        <div class="learn-links">
+          <a href="#" onclick="openInCode('src/tokenizer/spm_tokenizer.cpp')">📄 spm_tokenizer.cpp</a>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <div class="learn-cta">
     <h3 data-i18n="learn.cta.title">Ready to try?</h3>
     <p data-i18n-html="learn.cta.body">Switch to the <strong>Config</strong> tab to configure and start training your own model, or use the <strong>Code</strong> tab to explore the source code with AI assistance.</p>

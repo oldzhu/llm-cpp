@@ -64,6 +64,62 @@ const ARCH_COMPONENTS = {
     formula: "L = -1/N Σₙ log(p_yn), where p = softmax(logits[n])",
     file: "src/ops.cpp:654 cross_entropy()",
     shapes: ""
+  },
+  mla: {
+    label_en: "MLA (Latent Attention)", label_zh: "MLA (潜在注意力)",
+    desc_en: "Multi-Head Latent Attention (DeepSeek V3). Compresses K,V into low-dim latent, decompresses for attention. Greatly reduces KV-cache.",
+    desc_zh: "多头潜在注意力(DeepSeek V3)。将K,V压缩为低维潜在表示再展开用于注意力。大幅减少KV缓存。",
+    formula: "c_KV = X·W_dkv (compress, L<<C)\nK = c_KV·W_uk, V = c_KV·W_uv\nattn(Q,K,V) as usual",
+    file: "src/variants/mla/mla_attention.cpp",
+    shapes: "W_dkv:[C,L], W_uk:[L,C]"
+  },
+  ppo: {
+    label_en: "PPO (RL Stage)", label_zh: "PPO (强化学习)",
+    desc_en: "Proximal Policy Optimization for LLM alignment. ValueHead predicts returns, GAE computes advantages, clipped surrogate loss limits updates.",
+    desc_zh: "LLM对齐的近端策略优化。价值头预测回报，GAE计算优势，裁剪替代损失限制更新幅度。",
+    formula: "A_t = GAE(rewards, values)\nL = -min(ratio·A, clip(ratio,1-ε,1+ε)·A)",
+    file: "src/variants/ppo/ppo_trainer.cpp",
+    shapes: "ValueHead:[C,1]"
+  },
+  mtp: {
+    label_en: "MTP (Multi-Token)", label_zh: "MTP (多Token预测)",
+    desc_en: "Multiple independent LM heads predict tokens at offsets 1..N from the same hidden state. Increases training signal density.",
+    desc_zh: "多个独立LM头从同一隐藏状态预测不同偏移的token。提高训练信号密度。",
+    formula: "logits_m = hidden·W_lm_m + b_lm_m  (m=1..N)",
+    file: "src/model.cpp (MTP section)",
+    shapes: "N extra LM heads [C,V] each"
+  },
+  shared_moe: {
+    label_en: "Shared MoE", label_zh: "共享MoE",
+    desc_en: "Some experts are always active (shared), others are routed per-token. Used in DeepSeekMoE for better load balancing.",
+    desc_zh: "部分专家始终激活(共享)，其他按token路由。DeepSeekMoE使用，负载均衡更好。",
+    formula: "y = Σ_s Shared_s(x)/n + Σ_e gate[e]·Routed_e(x)",
+    file: "src/variants/moe/moe_mlp.cpp",
+    shapes: "n_shared: configurable"
+  },
+  qknorm: {
+    label_en: "QK-Norm", label_zh: "QK归一化",
+    desc_en: "Applies RMSNorm to Q and K vectors before computing attention scores. Stabilizes training in deep models.",
+    desc_zh: "在计算注意力分数前对Q和K应用RMSNorm。稳定深层模型训练。",
+    formula: "Q' = Q/rms(Q), K' = K/rms(K) before attention",
+    file: "src/ops.cpp self_attention_1h_ext()",
+    shapes: ""
+  },
+  alibi: {
+    label_en: "ALiBi", label_zh: "ALiBi位置偏置",
+    desc_en: "Attention with Linear Biases. Replaces positional embeddings with a simple distance-based penalty: score -= slope * |i-j|.",
+    desc_zh: "线性偏置注意力。用基于距离的简单惩罚替代位置嵌入: score -= slope * |i-j|。",
+    formula: "S[i,j] = Q[i]·K[j]/√C - slope·|i-j|",
+    file: "src/ops.cpp self_attention_1h_ext()",
+    shapes: "slope: per-head constant"
+  },
+  spm: {
+    label_en: "SentencePiece", label_zh: "SentencePiece分词",
+    desc_en: "Subword tokenizer used by LLaMA and many modern models. Uses unigram language model for segmentation.",
+    desc_zh: "LLaMA和许多现代模型使用的子词分词器。使用unigram语言模型进行分词。",
+    formula: "text → (longest prefix match) → token IDs",
+    file: "src/tokenizer/spm_tokenizer.cpp",
+    shapes: "vocab size: typically 32K-128K"
   }
 };
 
