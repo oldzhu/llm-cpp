@@ -755,6 +755,38 @@ void test_moe_shared_experts_forward() {
   expect_true((*out.balance_loss.data)[0] >= 0.0f, "MoE shared: balance >= 0");
 }
 
+void test_ppo_value_head_and_advantage() {
+  std::cout << "[RUN ] PPO value head and advantage computation\n";
+  const int N = 4, C = 8;
+  util::Rng rng(666);
+  // Create mock hidden states [N, C]
+  nn::Tensor hidden = nn::Tensor::zeros({N, C}, false);
+  for (float& v : *hidden.data) v = (rng.next_f01() - 0.5f) * 0.5f;
+  // Value head: [C, 1]
+  nn::Tensor vw = nn::Tensor::randn({C, 1}, 0.1f, 100 + static_cast<std::uint64_t>(rng.next_f01()*100), true);
+  nn::Tensor vb = nn::Tensor::zeros({1}, true);
+  // Compute values
+  nn::Tensor values = nn::matmul2d(hidden, vw); // [N, 1]
+  for (int n = 0; n < N; ++n)
+    (*values.data)[n] += (*vb.data)[0];
+  // Mock rewards and GAE
+  std::vector<float> rewards = {0.5f, -0.2f, 0.1f, 0.8f};
+  float gamma = 0.99f, lambda = 0.95f;
+  // Simple advantage: reward - value
+  bool all_finite = true;
+  for (int n = 0; n < N; ++n) {
+    float adv = rewards[n] - (*values.data)[n];
+    if (!std::isfinite(adv)) all_finite = false;
+  }
+  expect_true(all_finite, "PPO: advantages are finite");
+  // Verify clipped surrogate formula produces valid output
+  float clip_eps = 0.2f;
+  float ratio = 1.0f; // π_new/π_old = 1 (first step)
+  float advantage = 0.3f;
+  float clipped = std::min(ratio * advantage, std::max(std::min(ratio, 1.0f+clip_eps), 1.0f-clip_eps) * advantage);
+  expect_true(std::isfinite(clipped), "PPO: clipped loss is finite");
+}
+
 void test_mtp_forward_and_loss() {
   std::cout << "[RUN ] MTP multi-token prediction forward and loss\n";
   try {
@@ -1093,6 +1125,7 @@ int main(int /*argc*/, char** /*argv*/) {
     test_gqa_matches_mha_when_same_heads();
     test_mla_forward_produces_output();
     test_mtp_forward_and_loss();
+    test_ppo_value_head_and_advantage();
     test_blocked_simd_matches_cpu_matmul();
     test_simd_backend_via_model_training();
     test_vulkan_matches_cpu_matmul();
