@@ -347,7 +347,40 @@ class WebUI {
   }
 }
 
-// Global helper: switch to a tab and load a code file
+// Global zoom functionality
+(function() {
+  const content = document.getElementById("content");
+  const levelEl = document.getElementById("zoom-level");
+  let zoom = parseFloat(localStorage.getItem("zoom") || "1.0");
+  const STEP = 0.1, MIN = 0.5, MAX = 2.5;
+
+  function applyZoom() {
+    if (!content || !levelEl) return;
+    content.style.transform = `scale(${zoom})`;
+    levelEl.textContent = Math.round(zoom * 100) + "%";
+    localStorage.setItem("zoom", zoom.toFixed(1));
+  }
+  applyZoom();
+
+  document.getElementById("zoom-in")?.addEventListener("click", () => {
+    if (zoom < MAX) { zoom += STEP; applyZoom(); }
+  });
+  document.getElementById("zoom-out")?.addEventListener("click", () => {
+    if (zoom > MIN) { zoom -= STEP; applyZoom(); }
+  });
+  document.getElementById("zoom-reset")?.addEventListener("click", () => {
+    zoom = 1.0; applyZoom();
+  });
+
+  // Shift + mouse wheel zoom
+  window.addEventListener("wheel", (e) => {
+    if (!e.shiftKey) return;
+    e.preventDefault();
+    if (e.deltaY < 0 && zoom < MAX) zoom += STEP;
+    else if (e.deltaY > 0 && zoom > MIN) zoom -= STEP;
+    applyZoom();
+  }, { passive: false });
+})();: switch to a tab and load a code file
 function openInCode(filePath) {
   document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
   document.querySelectorAll(".tab-panel").forEach(p => p.classList.remove("active"));

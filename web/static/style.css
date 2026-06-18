@@ -150,6 +150,13 @@ body { font-family: 'Segoe UI', system-ui, sans-serif; background: #1a1a2e; colo
 .toast { position: fixed; bottom: 60px; right: 20px; background: #4caf50; color: #fff; padding: 10px 20px; border-radius: 6px; font-size: 13px; z-index: 2000; animation: fadeInOut 2s; }
 @keyframes fadeInOut { 0%,100%{opacity:0} 10%,80%{opacity:1} }
 
+/* === Zoom Controls === */
+#zoom-controls { position: fixed; bottom: 40px; right: 16px; display: flex; align-items: center; gap: 4px; background: #16213e; border: 1px solid #3a3a5a; border-radius: 8px; padding: 4px 6px; z-index: 500; }
+#zoom-controls button { background: #0f3460; color: #ccc; border: 1px solid #3a3a5a; border-radius: 4px; width: 28px; height: 28px; font-size: 16px; cursor: pointer; display: flex; align-items: center; justify-content: center; line-height: 1; }
+#zoom-controls button:hover { background: #e94560; color: #fff; }
+#zoom-level { color: #aaa; font-size: 11px; min-width: 36px; text-align: center; }
+#content { transform-origin: top left; transition: transform 0.1s ease; }
+
 /* === Learn Tab === */
 .learn-panel { max-width: 800px; margin: 0 auto; }
 .learn-panel h2 { color: #e94560; font-size: 18px; margin-bottom: 4px; }
