@@ -380,7 +380,9 @@ class WebUI {
     else if (e.deltaY > 0 && zoom > MIN) zoom -= STEP;
     applyZoom();
   }, { passive: false });
-})();: switch to a tab and load a code file
+})();
+
+// Global helper: switch to a tab and load a code file
 function openInCode(filePath) {
   document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
   document.querySelectorAll(".tab-panel").forEach(p => p.classList.remove("active"));
