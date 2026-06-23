@@ -920,6 +920,268 @@ void test_ppo_value_head_and_advantage() {
   expect_near(loss, -0.3f, 0.01f, "PPO: loss ≈ -advantage when ratio=1");
 }
 
+// ---------------------------------------------------------------------------
+// Comprehensive PPO unit tests
+// ---------------------------------------------------------------------------
+
+void test_ppo_value_forward_numeric() {
+  std::cout << "[RUN ] PPO value_forward numeric correctness\n";
+  nn::GradMode no_grad(false);
+  const int N = 2, C = 3;
+  nn::Tensor hidden = nn::Tensor::zeros({N, C}, false);
+  nn::Tensor vw = nn::Tensor::zeros({C, 1}, false);
+  nn::Tensor vb = nn::Tensor::zeros({1}, false);
+  // Deterministic, hand-checkable values
+  std::vector<float> h = {1.0f, 2.0f, 3.0f,
+                          -1.0f, 0.5f, 4.0f};
+  std::vector<float> w = {0.5f, -1.0f, 2.0f};
+  *hidden.data = h;
+  *vw.data = w;
+  (*vb.data)[0] = 0.25f;
+
+  nn::Tensor values = nn::variants::ppo::value_forward(hidden, vw, vb);
+  expect_true(values.shape == std::vector<int>({N}), "PPO value_forward: shape [N]");
+  for (int n = 0; n < N; ++n) {
+    float ref = (*vb.data)[0];
+    for (int c = 0; c < C; ++c) ref += h[static_cast<std::size_t>(n) * C + c] * w[static_cast<std::size_t>(c)];
+    expect_near((*values.data)[n], ref, 1e-4f,
+                "PPO value_forward: V[" + std::to_string(n) + "] == hidden@w + b");
+  }
+}
+
+void test_ppo_value_forward_shape_errors() {
+  std::cout << "[RUN ] PPO value_forward shape validation\n";
+  nn::GradMode no_grad(false);
+  const int N = 4, C = 5;
+  nn::Tensor hidden2d = nn::Tensor::zeros({N, C}, false);
+  nn::Tensor hidden3d = nn::Tensor::zeros({N, C, 2}, false);
+  nn::Tensor vw_ok = nn::Tensor::zeros({C, 1}, false);
+  nn::Tensor vw_bad = nn::Tensor::zeros({C, 2}, false);
+  nn::Tensor vb_ok = nn::Tensor::zeros({1}, false);
+  nn::Tensor vb_bad = nn::Tensor::zeros({2}, false);
+
+  auto throws = [](auto fn) {
+    try { fn(); } catch (const std::exception&) { return true; }
+    return false;
+  };
+
+  expect_true(throws([&]{ nn::variants::ppo::value_forward(hidden3d, vw_ok, vb_ok); }),
+              "PPO value_forward: rejects non-2D hidden");
+  expect_true(throws([&]{ nn::variants::ppo::value_forward(hidden2d, vw_bad, vb_ok); }),
+              "PPO value_forward: rejects w_value not [C,1]");
+  expect_true(throws([&]{ nn::variants::ppo::value_forward(hidden2d, vw_ok, vb_bad); }),
+              "PPO value_forward: rejects b_value not [1]");
+  // Valid shapes must NOT throw
+  expect_true(!throws([&]{ nn::variants::ppo::value_forward(hidden2d, vw_ok, vb_ok); }),
+              "PPO value_forward: accepts valid shapes");
+}
+
+void test_ppo_gae_recurrence_and_special_cases() {
+  std::cout << "[RUN ] PPO GAE recurrence and special cases\n";
+  std::vector<float> rewards = {0.5f, -0.2f, 0.1f, 0.8f, -0.3f};
+  std::vector<float> values  = {0.4f, 0.3f, 0.35f, 0.6f, 0.2f};
+  const int T = static_cast<int>(rewards.size());
+
+  // Reference GAE recomputed independently from the documented recurrence:
+  //   delta_t = r_t - V_t (+ gamma*V_{t+1} when t<T-1)
+  //   A_t = delta_t + gamma*lambda*A_{t+1}
+  auto reference_gae = [&](float gamma, float lambda) {
+    std::vector<float> adv(T, 0.0f);
+    float gae = 0.0f;
+    for (int t = T - 1; t >= 0; --t) {
+      float delta = rewards[t] - values[t];
+      if (t < T - 1) delta += gamma * values[t + 1];
+      gae = delta + gamma * lambda * gae;
+      adv[t] = gae;
+    }
+    return adv;
+  };
+
+  // General case
+  {
+    const float g = 0.99f, l = 0.95f;
+    auto got = nn::variants::ppo::compute_gae(rewards, values, g, l);
+    auto ref = reference_gae(g, l);
+    expect_true(got.size() == static_cast<std::size_t>(T), "PPO GAE: length == T");
+    for (int t = 0; t < T; ++t)
+      expect_near(got[t], ref[t], 1e-4f, "PPO GAE: A[" + std::to_string(t) + "] matches recurrence");
+  }
+
+  // lambda = 0  =>  A_t == delta_t (no temporal smoothing)
+  {
+    auto got = nn::variants::ppo::compute_gae(rewards, values, 0.99f, 0.0f);
+    for (int t = 0; t < T; ++t) {
+      float delta = rewards[t] - values[t];
+      if (t < T - 1) delta += 0.99f * values[t + 1];
+      expect_near(got[t], delta, 1e-4f, "PPO GAE(lambda=0): A[" + std::to_string(t) + "] == delta_t");
+    }
+  }
+
+  // gamma = 0  =>  A_t == r_t - V_t  (no bootstrap, no accumulation)
+  {
+    auto got = nn::variants::ppo::compute_gae(rewards, values, 0.0f, 0.95f);
+    for (int t = 0; t < T; ++t)
+      expect_near(got[t], rewards[t] - values[t], 1e-4f,
+                  "PPO GAE(gamma=0): A[" + std::to_string(t) + "] == r_t - V_t");
+  }
+
+  // All advantages finite
+  {
+    auto got = nn::variants::ppo::compute_gae(rewards, values, 0.99f, 0.95f);
+    for (float a : got) expect_true(std::isfinite(a), "PPO GAE: advantage finite");
+  }
+}
+
+void test_ppo_gae_edge_sizes() {
+  std::cout << "[RUN ] PPO GAE edge sizes (empty, single)\n";
+  // Empty trajectory => empty advantages
+  {
+    std::vector<float> r, v;
+    auto got = nn::variants::ppo::compute_gae(r, v, 0.99f, 0.95f);
+    expect_true(got.empty(), "PPO GAE: empty input yields empty output");
+  }
+  // Single step => A_0 == r_0 - V_0
+  {
+    std::vector<float> r = {0.7f}, v = {0.25f};
+    auto got = nn::variants::ppo::compute_gae(r, v, 0.99f, 0.95f);
+    expect_true(got.size() == 1, "PPO GAE: single-step length 1");
+    expect_near(got[0], 0.7f - 0.25f, 1e-5f, "PPO GAE: single-step A_0 == r_0 - V_0");
+  }
+}
+
+void test_ppo_clip_surrogate_regimes() {
+  std::cout << "[RUN ] PPO clip_surrogate_loss across regimes\n";
+  const float eps = 0.2f;
+  const float lp_old = 0.0f;
+  const float ln2 = std::log(2.0f);    // ratio = 2.0  (above 1+eps)
+  const float lnhalf = std::log(0.5f); // ratio = 0.5  (below 1-eps)
+
+  // A > 0, ratio above clip: pessimistic min picks clipped => loss = -(1+eps)*A
+  expect_near(nn::variants::ppo::clip_surrogate_loss(ln2, lp_old, 1.0f, eps),
+              -(1.0f + eps) * 1.0f, 1e-4f, "PPO clip: A>0, ratio>1+eps -> clipped");
+  // A > 0, ratio below clip: min picks unclipped (smaller) => loss = -ratio*A
+  expect_near(nn::variants::ppo::clip_surrogate_loss(lnhalf, lp_old, 1.0f, eps),
+              -0.5f * 1.0f, 1e-4f, "PPO clip: A>0, ratio<1-eps -> unclipped");
+  // A < 0, ratio above clip: min picks unclipped (more negative) => loss = -ratio*A
+  expect_near(nn::variants::ppo::clip_surrogate_loss(ln2, lp_old, -1.0f, eps),
+              -2.0f * -1.0f, 1e-4f, "PPO clip: A<0, ratio>1+eps -> unclipped");
+  // A < 0, ratio below clip: min picks clipped => loss = -(1-eps)*A
+  expect_near(nn::variants::ppo::clip_surrogate_loss(lnhalf, lp_old, -1.0f, eps),
+              -(1.0f - eps) * -1.0f, 1e-4f, "PPO clip: A<0, ratio<1-eps -> clipped");
+  // ratio == 1 (in range) => loss = -A
+  expect_near(nn::variants::ppo::clip_surrogate_loss(0.3f, 0.3f, 0.42f, eps),
+              -0.42f, 1e-4f, "PPO clip: ratio=1 -> loss = -A");
+  // zero advantage => zero loss regardless of ratio
+  expect_near(nn::variants::ppo::clip_surrogate_loss(ln2, lp_old, 0.0f, eps),
+              0.0f, 1e-5f, "PPO clip: zero advantage -> zero loss");
+}
+
+void test_ppo_mock_reward() {
+  std::cout << "[RUN ] PPO mock_reward_per_token\n";
+  auto r = nn::variants::ppo::mock_reward_per_token(4.0f, 5);
+  expect_true(r.size() == 5, "PPO mock_reward: length == num_tokens");
+  for (std::size_t i = 0; i < r.size(); ++i)
+    expect_near(r[i], -4.0f, 1e-6f, "PPO mock_reward: reward == -loss");
+  // Lower loss => strictly higher reward
+  auto r_low = nn::variants::ppo::mock_reward_per_token(1.0f, 3);
+  expect_true(r_low[0] > r[0], "PPO mock_reward: lower loss yields higher reward");
+  // Zero tokens => empty
+  auto r0 = nn::variants::ppo::mock_reward_per_token(2.0f, 0);
+  expect_true(r0.empty(), "PPO mock_reward: zero tokens yields empty");
+}
+
+void test_ppo_value_head_gradcheck() {
+  std::cout << "[RUN ] PPO value head gradient check (finite difference)\n";
+  nn::GradMode no_grad(false);
+  const int N = 6, C = 4;
+  util::Rng rng(2024);
+  nn::Tensor hidden = nn::Tensor::zeros({N, C}, false);
+  for (float& v : *hidden.data) v = (rng.next_f01() - 0.5f) * 0.6f;
+
+  // Evaluation point for the gradient
+  std::vector<float> w0(C), returns(N);
+  for (float& v : w0) v = (rng.next_f01() - 0.5f) * 0.4f;
+  for (float& v : returns) v = (rng.next_f01() - 0.5f) * 0.8f;
+  const float b0 = 0.1f;
+
+  // Pure MSE loss = mean((V - R)^2) at given (w, b)
+  auto mse_at = [&](const std::vector<float>& w, float b) {
+    nn::Tensor vw = nn::Tensor::zeros({C, 1}, false);
+    nn::Tensor vb = nn::Tensor::zeros({1}, false);
+    *vw.data = w;
+    (*vb.data)[0] = b;
+    nn::Tensor values = nn::variants::ppo::value_forward(hidden, vw, vb);
+    double s = 0.0;
+    for (int n = 0; n < N; ++n) {
+      double d = static_cast<double>((*values.data)[n]) - returns[static_cast<std::size_t>(n)];
+      s += d * d;
+    }
+    return s / static_cast<double>(N);
+  };
+
+  // Analytic gradient: ppo_update_value_head writes dMSE/dw into vw.grad / vb.grad
+  // (computed at the pre-step parameter values; AdamW::step does not modify grads).
+  nn::Tensor vw = nn::Tensor::zeros({C, 1}, true);
+  nn::Tensor vb = nn::Tensor::zeros({1}, true);
+  *vw.data = w0;
+  (*vb.data)[0] = b0;
+  optim::AdamWConfig ocfg; ocfg.lr = 1e-4f; ocfg.weight_decay = 0.0f;
+  optim::AdamW opt(ocfg);
+  std::vector<nn::Tensor*> params = {&vw, &vb};
+  nn::variants::ppo::ppo_update_value_head(hidden, returns, vw, vb, 0.5f, opt, params);
+  std::vector<float> grad_w(*vw.grad);
+  float grad_b = (*vb.grad)[0];
+
+  // Central finite differences
+  const float h = 1e-2f;
+  for (int c = 0; c < C; ++c) {
+    std::vector<float> wp = w0, wm = w0;
+    wp[static_cast<std::size_t>(c)] += h;
+    wm[static_cast<std::size_t>(c)] -= h;
+    float fd = static_cast<float>((mse_at(wp, b0) - mse_at(wm, b0)) / (2.0 * h));
+    expect_near(grad_w[static_cast<std::size_t>(c)], fd, 1e-2f,
+                "PPO gradcheck: dMSE/dw[" + std::to_string(c) + "]");
+  }
+  {
+    float fd = static_cast<float>((mse_at(w0, b0 + h) - mse_at(w0, b0 - h)) / (2.0 * h));
+    expect_near(grad_b, fd, 1e-2f, "PPO gradcheck: dMSE/db");
+  }
+}
+
+void test_ppo_value_head_converges() {
+  std::cout << "[RUN ] PPO value head converges to fixed returns\n";
+  const int N = 8, C = 4;
+  util::Rng rng(31337);
+  nn::Tensor hidden = nn::Tensor::zeros({N, C}, false);
+  for (float& v : *hidden.data) v = (rng.next_f01() - 0.5f) * 0.5f;
+  nn::Tensor vw = nn::Tensor::randn({C, 1}, 0.1f, 7, true);
+  nn::Tensor vb = nn::Tensor::zeros({1}, true);
+
+  // Constant target is exactly representable (w=0, b=1) -> loss must approach 0
+  std::vector<float> returns(N, 1.0f);
+
+  optim::AdamWConfig ocfg; ocfg.lr = 1e-2f; ocfg.weight_decay = 0.0f;
+  optim::AdamW opt(ocfg);
+  std::vector<nn::Tensor*> params = {&vw, &vb};
+
+  float first = 0.0f, last = 0.0f;
+  bool all_finite = true;
+  for (int it = 0; it < 400; ++it) {
+    float l = nn::variants::ppo::ppo_update_value_head(hidden, returns, vw, vb, 0.5f, opt, params);
+    if (!std::isfinite(l)) all_finite = false;
+    if (it == 0) first = l;
+    if (it == 399) last = l;
+  }
+  expect_true(all_finite, "PPO converge: loss finite every step");
+  expect_true(last < first, "PPO converge: loss decreases over training");
+  expect_true(last < first * 0.1f, "PPO converge: loss drops to <10% of initial");
+
+  nn::Tensor final_vals = nn::variants::ppo::value_forward(hidden, vw, vb);
+  for (int n = 0; n < N; ++n)
+    expect_near((*final_vals.data)[n], 1.0f, 0.2f,
+                "PPO converge: value[" + std::to_string(n) + "] ~ target");
+}
+
 void test_mtp_forward_and_loss() {
   std::cout << "[RUN ] MTP multi-token prediction forward and loss\n";
   try {
@@ -1261,6 +1523,14 @@ int main(int /*argc*/, char** /*argv*/) {
     test_mtp_forward_and_loss();
     test_ppo_value_head_and_advantage();
     test_ppo_full_training_loop();
+    test_ppo_value_forward_numeric();
+    test_ppo_value_forward_shape_errors();
+    test_ppo_gae_recurrence_and_special_cases();
+    test_ppo_gae_edge_sizes();
+    test_ppo_clip_surrogate_regimes();
+    test_ppo_mock_reward();
+    test_ppo_value_head_gradcheck();
+    test_ppo_value_head_converges();
     test_qk_norm_attention();
     test_sliding_window_attention();
     test_alibi_attention();
