@@ -2,6 +2,7 @@
 
 #include <vector>
 #include "tensor.h"
+#include "optim.h"
 
 namespace nn::variants::ppo {
 
@@ -21,14 +22,6 @@ struct PPOConfig {
   int ppo_steps = 4;       // number of PPO update steps per batch
 };
 
-struct PPOBatch {
-  std::vector<std::int32_t> tokens;    // [B*T]
-  std::vector<std::int32_t> old_logits; // placeholder for simplicity
-  std::vector<float> rewards;           // [B*T]
-  std::vector<float> old_values;        // [B*T]
-  int B, T;
-};
-
 // Value head: linear projection from hidden state to scalar value
 //   V(s) = hidden @ w_value + b_value
 Tensor value_forward(const Tensor& hidden_2d, const Tensor& w_value, const Tensor& b_value);
@@ -44,8 +37,23 @@ std::vector<float> compute_gae(const std::vector<float>& rewards,
 float clip_surrogate_loss(float log_prob_new, float log_prob_old,
                           float advantage, float clip_eps);
 
-// Total PPO loss: policy loss + value loss
-//   L_total = -(policy_loss) + vf_coef * MSE(values, returns)
-// In practice, we minimize -policy_improvement + vf_coef * value_loss
+// Mock reward: uses model's cross-entropy loss as reward signal.
+// Lower LM loss → better generation → higher reward.
+//   reward[t] = -loss_per_position (simplified: scalar reward)
+std::vector<float> mock_reward_per_token(float loss_value, int num_tokens);
+
+// PPO training loop: runs one PPO iteration (rollout + advantage + update).
+// Returns total PPO loss for monitoring.
+//   hidden: [N,C] hidden states from model forward
+//   vw, vb: value head weights
+//   advantages: pre-computed GAE advantages
+//   returns: pre-computed returns (values + advantages)
+//   optimizer: AdamW optimizer for value head
+float ppo_update_value_head(const Tensor& hidden_2d,
+                             const std::vector<float>& returns,
+                             Tensor& vw, Tensor& vb,
+                             float vf_coef,
+                             optim::AdamW& optimizer,
+                             const std::vector<nn::Tensor*>& params);
 
 } // namespace nn::variants::ppo

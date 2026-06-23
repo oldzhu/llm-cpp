@@ -815,6 +815,39 @@ void test_alibi_attention() {
     expect_true(lN < l0, "ALiBi: training loss decreases");
 }
 
+void test_ppo_full_training_loop() {
+  std::cout << "[RUN ] PPO full training loop (mock reward + GAE + value update)\n";
+  const int C = 8, N = 16;
+  util::Rng rng(1234);
+  nn::Tensor hidden = nn::Tensor::zeros({N, C}, false);
+  for (float& v : *hidden.data) v = (rng.next_f01() - 0.5f) * 0.3f;
+  nn::Tensor vw = nn::Tensor::randn({C, 1}, 0.1f, 1000, true);
+  nn::Tensor vb = nn::Tensor::zeros({1}, true);
+  std::vector<float> mock_losses = {5.5f, 5.3f, 5.1f, 4.9f, 4.7f, 4.5f, 4.3f, 4.1f};
+  optim::AdamWConfig ocfg; ocfg.lr = 1e-3f; ocfg.weight_decay = 0.0f;
+  optim::AdamW opt(ocfg);
+  std::vector<nn::Tensor*> vparams = {&vw, &vb};
+  nn::variants::ppo::PPOConfig ppo_cfg;
+  float prev_mse = 1e9f;
+  for (int iter = 0; iter < 8; ++iter) {
+    float lm_loss = mock_losses[iter];
+    nn::Tensor values = nn::variants::ppo::value_forward(hidden, vw, vb);
+    auto rewards = nn::variants::ppo::mock_reward_per_token(lm_loss, N);
+    std::vector<float> vals_vec(N);
+    for (int n = 0; n < N; ++n) vals_vec[n] = (*values.data)[n];
+    auto advantages = nn::variants::ppo::compute_gae(rewards, vals_vec, ppo_cfg.gamma, ppo_cfg.lambda);
+    std::vector<float> returns(N);
+    for (int n = 0; n < N; ++n) returns[n] = vals_vec[n] + advantages[n];
+    float vloss = nn::variants::ppo::ppo_update_value_head(hidden, returns, vw, vb, ppo_cfg.vf_coef, opt, vparams);
+    if (iter > 2) expect_true(vloss < prev_mse * 2.0f, "PPO: value loss stable");
+    prev_mse = vloss;
+  }
+  nn::Tensor final_vals = nn::variants::ppo::value_forward(hidden, vw, vb);
+  bool ok = true;
+  for (int n = 0; n < N; ++n) if (!std::isfinite((*final_vals.data)[n])) ok = false;
+  expect_true(ok, "PPO: final values finite");
+}
+
 void test_moe_shared_experts_forward() {
   std::cout << "[RUN ] MoE shared experts forward\n";
   const int N = 4, C = 8, n_exp = 2, top_k = 1, n_shared = 1, interm = 4*C;
@@ -1227,6 +1260,7 @@ int main(int /*argc*/, char** /*argv*/) {
     test_mla_forward_produces_output();
     test_mtp_forward_and_loss();
     test_ppo_value_head_and_advantage();
+    test_ppo_full_training_loop();
     test_qk_norm_attention();
     test_sliding_window_attention();
     test_alibi_attention();
