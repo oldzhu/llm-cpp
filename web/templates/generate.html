@@ -1,0 +1,31 @@
+<div class="gen-panel">
+  <h2>Generate Text from Model</h2>
+  <div class="gen-form">
+    <div class="gen-row">
+      <label>Checkpoint:</label>
+      <select id="gen-model-select">
+        <option value="">-- Select checkpoint --</option>
+      </select>
+      <button onclick="genUI.loadModel()" id="gen-load-btn" class="btn btn-start">Load</button>
+      <span id="gen-model-info" class="gen-model-info"></span>
+    </div>
+    <div class="gen-row">
+      <label>Prompt:</label>
+      <textarea id="gen-prompt" placeholder="Enter your prompt text here..." rows="3"></textarea>
+    </div>
+    <div class="gen-params">
+      <label>Temperature: <input type="range" id="gen-temp" min="0.1" max="2.0" step="0.1" value="0.8"><span id="gen-temp-val">0.8</span></label>
+      <label>Top-K: <input type="range" id="gen-topk" min="1" max="200" step="1" value="40"><span id="gen-topk-val">40</span></label>
+      <label>Max Tokens: <input type="range" id="gen-tokens" min="10" max="500" step="10" value="100"><span id="gen-tokens-val">100</span></label>
+    </div>
+    <button onclick="genUI.generate()" id="gen-generate-btn" class="btn btn-start" disabled>Generate</button>
+  </div>
+  <div class="gen-output">
+    <h3>Output</h3>
+    <div id="gen-output-text" class="gen-output-text"></div>
+    <div class="gen-output-stats" id="gen-stats" style="display:none">
+      <span>Tokens: <span id="gen-token-count">0</span></span>
+      <span>Time: <span id="gen-time">--</span></span>
+    </div>
+  </div>
+</div>

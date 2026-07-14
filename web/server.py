@@ -34,12 +34,14 @@ def _render_page():
     chat_t = (TEMPLATE_DIR / "chat.html").read_text(encoding="utf-8")
     learn = (TEMPLATE_DIR / "learn.html").read_text(encoding="utf-8")
     play_t = (TEMPLATE_DIR / "play.html").read_text(encoding="utf-8")
+    gen_t = (TEMPLATE_DIR / "generate.html").read_text(encoding="utf-8")
     base = base.replace("{% include 'config.html' %}", config)
     base = base.replace("{% include 'monitor.html' %}", monitor)
     base = base.replace("{% include 'code.html' %}", code)
     base = base.replace("{% include 'chat.html' %}", chat_t)
     base = base.replace("{% include 'learn.html' %}", learn)
     base = base.replace("{% include 'play.html' %}", play_t)
+    base = base.replace("{% include 'generate.html' %}", gen_t)
     return base
 
 

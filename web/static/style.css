@@ -202,3 +202,21 @@ body { font-family: 'Segoe UI', system-ui, sans-serif; background: #1a1a2e; colo
 .play-input-row textarea { flex: 1; background: #0d0d1a; color: #fff; border: 1px solid #3a3a5a; padding: 8px; border-radius: 6px; font-size: 13px; resize: none; }
 .play-input-row button { background: #e94560; color: #fff; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 13px; }
 .play-input-row button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* === Generate Tab === */
+.gen-panel { max-width: 700px; margin: 0 auto; }
+.gen-panel h2 { color: #e94560; margin-bottom: 16px; }
+.gen-form { display: flex; flex-direction: column; gap: 12px; margin-bottom: 20px; }
+.gen-row { display: flex; align-items: center; gap: 10px; }
+.gen-row label { color: #aaa; font-size: 13px; min-width: 80px; }
+.gen-row select { flex: 1; background: #0d0d1a; color: #fff; border: 1px solid #3a3a5a; padding: 6px; border-radius: 4px; font-size: 12px; }
+.gen-row textarea { flex: 1; background: #0d0d1a; color: #fff; border: 1px solid #3a3a5a; padding: 8px; border-radius: 4px; font-size: 13px; resize: vertical; }
+.gen-model-info { font-size: 11px; color: #888; }
+.gen-params { display: flex; gap: 16px; flex-wrap: wrap; }
+.gen-params label { font-size: 11px; color: #aaa; display: flex; align-items: center; gap: 6px; }
+.gen-params input[type="range"] { accent-color: #e94560; width: 100px; }
+.gen-params span { color: #e94560; font-weight: bold; font-size: 12px; }
+.gen-output h3 { color: #e94560; margin-bottom: 8px; }
+.gen-output-text { background: #0d0d1a; color: #e0e0e0; padding: 16px; border-radius: 8px; min-height: 80px; white-space: pre-wrap; word-break: break-word; font-size: 14px; line-height: 1.7; }
+.gen-output-stats { margin-top: 8px; display: flex; gap: 20px; font-size: 12px; color: #888; }
+.gen-output-stats span span { color: #e94560; }
