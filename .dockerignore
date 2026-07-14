@@ -1,0 +1,21 @@
+# Build artifacts
+/build/
+
+# Data files (keep checkpoints)
+/data/*.txt
+/data/*.bin
+/data/*.csv
+
+# Python
+__pycache__/
+*.pyc
+
+# Node
+node_modules/
+
+# IDE
+.vscode/
+
+# Large downloads
+/data/TinyLlama*/
+/data/distilgpt2*/

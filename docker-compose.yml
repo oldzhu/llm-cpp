@@ -1,0 +1,13 @@
+services:
+  train-gpt:
+    build: .
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data:/app/data
+      - ./web/.env:/app/web/.env:ro
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - AI_MODEL=${AI_MODEL:-deepseek-v4-flash}
+      - AI_BASE_URL=${AI_BASE_URL:-https://api.deepseek.com/anthropic}
+    restart: unless-stopped

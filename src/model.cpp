@@ -190,10 +190,8 @@ Tensor TinyGPT::forward_logits(const std::vector<std::int32_t>& tokens_bt, int B
       // 1-head + RoPE: use RoPE variant (applies rotation, no wpe needed)
       a = nn::variants::rope::self_attention_rope(h, blk.w_qkv, blk.b_qkv, blk.w_proj, blk.b_proj);
     } else if (cfg_.attn_type == 0) {
-      // 1-head attention. Use extended version for inference-only features
-      // (ALiBi/SW/QK-Norm lack full autograd — training falls back to standard)
-      bool use_ext = (cfg_.pos_type == 2 || cfg_.swin_win > 0 || cfg_.qk_norm) && !nn::is_grad_enabled();
-      if (use_ext)
+      // 1-head attention. Use extended version when QK-Norm/SW/ALiBi enabled.
+      if (cfg_.pos_type == 2 || cfg_.swin_win > 0 || cfg_.qk_norm)
         a = nn::self_attention_1h_ext(h, blk.w_qkv, blk.b_qkv, blk.w_proj, blk.b_proj,
                                        cfg_.qk_norm, cfg_.swin_win, cfg_.pos_type);
       else

@@ -902,15 +902,11 @@ Tensor self_attention_1h_ext(const Tensor& x,
   const int B = x.shape[0], T = x.shape[1], C = x.shape[2];
 
   Tensor qkv = linear_lastdim(x, w_qkv, b_qkv); // [B,T,3C]
-  // Manual Q/K/V extraction to apply QK-Norm
-  Tensor q = Tensor::zeros({B, T, C}, false);
-  Tensor k = Tensor::zeros({B, T, C}, false);
-  Tensor v = Tensor::zeros({B, T, C}, false);
-  for (int i = 0; i < B*T*C; ++i) {
-    (*q.data)[i] = (*qkv.data)[i];
-    (*k.data)[i] = (*qkv.data)[B*T*C + i];
-    (*v.data)[i] = (*qkv.data)[2*B*T*C + i];
-  }
+
+  // Extract Q,K,V using slice_lastdim_copy (has full autograd backward)
+  Tensor q = slice_lastdim_copy(qkv, 0, C);     // [B,T,C]
+  Tensor k = slice_lastdim_copy(qkv, C, C);     // [B,T,C]
+  Tensor v = slice_lastdim_copy(qkv, 2 * C, C); // [B,T,C]
 
   // QK-Norm: apply RMSNorm to Q and K
   if (qk_norm) {
