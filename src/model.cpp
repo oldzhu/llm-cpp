@@ -107,6 +107,10 @@ TinyGPT::TinyGPT(const Config& cfg, std::uint64_t seed) : cfg_(cfg) {
     mtp_b_lm_.push_back(Tensor::zeros({V}, true));
   }
 
+  // PPO Value Head
+  w_value_ = Tensor::randn({C, 1}, 0.1f, seed ^ 0xE000ULL, true);
+  b_value_ = Tensor::zeros({1}, true);
+
   ln_final_gamma_ = Tensor::zeros({C}, true);
   ln_final_beta_  = Tensor::zeros({C}, true);
   for (int ci = 0; ci < C; ++ci) {
@@ -371,6 +375,8 @@ void TinyGPT::zero_grad() {
   ln_final_beta_.zero_grad();
   for (auto& t : mtp_w_lm_) t.zero_grad();
   for (auto& t : mtp_b_lm_) t.zero_grad();
+  w_value_.zero_grad();
+  b_value_.zero_grad();
 }
 
 Params TinyGPT::parameters() {
@@ -397,6 +403,8 @@ Params TinyGPT::parameters() {
   p.tensors.push_back(&ln_final_beta_);
   for (auto& t : mtp_w_lm_) p.tensors.push_back(&t);
   for (auto& t : mtp_b_lm_) p.tensors.push_back(&t);
+  p.tensors.push_back(&w_value_);
+  p.tensors.push_back(&b_value_);
   for (auto& blk : blocks_) {
     p.tensors.push_back(&blk.swiglu_gate);
     p.tensors.push_back(&blk.swiglu_gate_b);
@@ -446,6 +454,8 @@ ParamsConst TinyGPT::parameters_const() const {
   p.tensors.push_back(&ln_final_beta_);
   for (auto& t : mtp_w_lm_) p.tensors.push_back(&t);
   for (auto& t : mtp_b_lm_) p.tensors.push_back(&t);
+  p.tensors.push_back(&w_value_);
+  p.tensors.push_back(&b_value_);
   for (const auto& blk : blocks_) {
     p.tensors.push_back(&blk.swiglu_gate);
     p.tensors.push_back(&blk.swiglu_gate_b);
@@ -469,6 +479,19 @@ ParamsConst TinyGPT::parameters_const() const {
     for (const auto& t : blk.moe_expert_bout) p.tensors.push_back(&t);
   }
   return p;
+}
+
+Tensor TinyGPT::value_forward() const {
+  // Compute V(s) from cached hidden state using ValueHead
+  const int N = cached_hidden_.shape[0] * cached_hidden_.shape[1];
+  const int C = cfg_.d_model;
+  if (cached_hidden_.shape.size() < 2) throw std::runtime_error("value_forward: no cached hidden state");
+  Tensor flat = nn::reshape(cached_hidden_, {N, C});
+  Tensor raw = nn::matmul2d(flat, w_value_); // [N, 1]
+  Tensor values = nn::Tensor::zeros({N}, false);
+  for (int n = 0; n < N; ++n)
+    (*values.data)[static_cast<std::size_t>(n)] = (*raw.data)[static_cast<std::size_t>(n)] + (*b_value_.data)[0];
+  return values;
 }
 
 } // namespace model

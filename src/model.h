@@ -53,6 +53,10 @@ class TinyGPT {
   Params parameters();
   ParamsConst parameters_const() const;
 
+  // PPO support: get hidden state from last forward pass
+  const nn::Tensor& hidden_state() const { return cached_hidden_; }
+  nn::Tensor value_forward() const; // compute V(s) from cached hidden state
+
  private:
   Config cfg_;
 
@@ -125,7 +129,12 @@ class TinyGPT {
   // MTP heads (extra LM heads for multi-token prediction)
   std::vector<nn::Tensor> mtp_w_lm_; // n_mtp-1 heads, each [C,V]
   std::vector<nn::Tensor> mtp_b_lm_; // n_mtp-1 heads, each [V]
-  nn::Tensor cached_hidden_; // cached pre-LN hidden state for MTP loss
+
+  // PPO Value Head
+  nn::Tensor w_value_; // [C, 1]
+  nn::Tensor b_value_; // [1]
+
+  nn::Tensor cached_hidden_; // cached pre-LN hidden state from last forward
 
   nn::Tensor add_positional(const nn::Tensor& x, int B, int T);
 };
