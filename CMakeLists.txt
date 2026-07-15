@@ -117,7 +117,7 @@ target_link_libraries(test_build_llm PRIVATE llm_core llm_variant_mha llm_varian
 
 add_test(NAME build_llm_tests COMMAND test_build_llm WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 
-if (MSVC)
+if(MSVC)
   target_compile_options(llm_core PRIVATE /W4 /permissive-)
   target_compile_options(llm_variant_mha PRIVATE /W4 /permissive-)
   target_compile_options(llm_variant_kvcache PRIVATE /W4 /permissive-)
@@ -141,4 +141,37 @@ else()
   target_compile_options(llm_variant_grpo PRIVATE -Wall -Wextra -Wpedantic)
   target_compile_options(train_gpt PRIVATE -Wall -Wextra -Wpedantic)
   target_compile_options(test_build_llm PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
+# ---- CUDA backend ----
+option(ENABLE_CUDA "Enable CUDA backend" OFF)
+
+if(ENABLE_CUDA)
+  enable_language(CUDA)
+  set(CMAKE_CUDA_STANDARD 17)
+  set(CMAKE_CUDA_STANDARD_REQUIRED ON)
+
+  set(CUDA_SOURCES
+    src/cuda/cuda_device.cu
+    src/cuda/cuda_kernels.cu
+    src/cuda/cuda_ops.cu
+  )
+
+  add_library(llm_cuda ${CUDA_SOURCES})
+  target_include_directories(llm_cuda PUBLIC src)
+  target_link_libraries(llm_cuda PUBLIC llm_core)
+
+  if(MSVC)
+    target_compile_options(llm_cuda PRIVATE /W4 /permissive- -Xcompiler="/W4 /permissive-")
+  else()
+    target_compile_options(llm_cuda PRIVATE -Wall -Wextra -Wpedantic)
+  endif()
+
+  add_executable(test_cuda
+    tests/test_cuda.cu
+  )
+  target_link_libraries(test_cuda PRIVATE llm_cuda llm_core)
+  target_include_directories(test_cuda PRIVATE src)
+
+  add_test(NAME cuda_tests COMMAND test_cuda WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 endif()
