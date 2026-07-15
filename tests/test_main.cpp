@@ -22,6 +22,7 @@
 #include "variants/gqa/gqa_attention.h"
 #include "variants/mla/mla_attention.h"
 #include "variants/ppo/ppo_trainer.h"
+#include "variants/grpo/grpo_trainer.h"
 #include "variants/moe/moe_mlp.h"
 #include "tokenizer/byte_tokenizer.h"
 #include "tokenizer/bpe_tokenizer.h"
@@ -848,6 +849,25 @@ void test_ppo_full_training_loop() {
   expect_true(ok, "PPO: final values finite");
 }
 
+void test_grpo_advantages_and_loss() {
+  std::cout << "[RUN ] GRPO advantages + surrogate loss\n";
+  // Test group advantage computation
+  std::vector<float> scores = {1.0f, 3.0f, 5.0f, 7.0f,  2.0f, 4.0f, 6.0f, 8.0f};
+  auto adv = nn::variants::grpo::compute_grpo_advantages(scores, 4);
+  expect_true(adv.size() == 8, "GRPO: advantages size correct");
+
+  // First group mean = (1+3+5+7)/4 = 4, std ≈ 2.24
+  // A = (score-4)/2.24. Higher score → positive advantage.
+  expect_true(adv[3] > 0.0f, "GRPO: high score → positive advantage");
+  expect_true(adv[0] < 0.0f, "GRPO: low score → negative advantage");
+
+  // Test surrogate loss
+  float loss = nn::variants::grpo::grpo_surrogate_loss(-0.5f, -0.5f, 0.3f, 0.2f);
+  expect_true(std::isfinite(loss), "GRPO: surrogate loss finite");
+  // Same probs → ratio=1 → loss = -advantage
+  expect_near(loss, -0.3f, 0.01f, "GRPO: loss ≈ -advantage when ratio=1");
+}
+
 void test_moe_shared_experts_forward() {
   std::cout << "[RUN ] MoE shared experts forward\n";
   const int N = 4, C = 8, n_exp = 2, top_k = 1, n_shared = 1, interm = 4*C;
@@ -1531,6 +1551,7 @@ int main(int /*argc*/, char** /*argv*/) {
     test_ppo_mock_reward();
     test_ppo_value_head_gradcheck();
     test_ppo_value_head_converges();
+    test_grpo_advantages_and_loss();
     test_qk_norm_attention();
     test_sliding_window_attention();
     test_alibi_attention();
